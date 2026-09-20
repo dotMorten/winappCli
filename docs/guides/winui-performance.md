@@ -1,11 +1,11 @@
 # Find expensive WinUI layout, scrolling work, and GC context
 
 ```powershell
-winapp run . --profile .\traces\startup --detach --json
+winapp run . --profile .\traces\startup --detach
 ```
 
 This launches your project and starts a bounded native WinUI 3 ETW recording.
-Use the returned `Profile.CaptureId` with `winapp perf status` or `winapp perf stop`.
+Use the returned capture ID with `winapp perf status` or `winapp perf stop`.
 The default recording lasts 30 seconds and allows 128 MiB of raw ETL. Override
 these with `--profile-duration-sec` (1-300) and `--profile-max-size-mib` (1-1024).
 Without `--detach`, `run` continues waiting for the app after recording finishes.
@@ -29,19 +29,20 @@ perturb elapsed timings when profiling and debug output are used together.
 ## Record an existing app
 
 ```powershell
-winapp perf start --app MyWinUIApp --output .\traces\scroll --json
-winapp perf mark CAPTURE_ID --name scenario-start --json
+winapp perf start --app MyWinUIApp --output .\traces\scroll
+winapp perf mark CAPTURE_ID --name scenario-start
 # Navigate and scroll in the app, manually or with verified winapp ui selectors.
 # Wait for the intended visible scenario to finish before placing the end marker.
-winapp perf mark CAPTURE_ID --name scenario-end --json
-winapp perf stop CAPTURE_ID --json
+winapp perf mark CAPTURE_ID --name scenario-end
+winapp perf stop CAPTURE_ID
 ```
 
 Replace `CAPTURE_ID` with the returned `id`, and `MyWinUIApp` with your app.
+Add `--json` when a script or agent needs structured capture state and IDs.
 `start` returns after the worker's control channel and provider enablement are
 ready, not after proving that useful events have been recorded. The recorder
 does not take the foreground or prevent a separate agent from driving the UI.
-Use `winapp ui inspect --app MyWinUIApp --interactive --json` to discover selectors;
+Use `winapp ui inspect --app MyWinUIApp --interactive` to discover selectors;
 see [UI automation](../ui-automation.md) for navigation and scrolling commands.
 
 For attach captures, `--app` (or `-a`) accepts a PID, process name (exact or partial),
@@ -69,13 +70,13 @@ and move captures only after stopping them.
 ## Ask narrow questions
 
 ```powershell
-winapp perf analyze .\traces\scroll --json
-winapp perf analyze .\traces\scroll --from-marker scenario-start --to-marker scenario-end --json
-winapp perf analyze .\traces\scroll --view elements --type ItemsStackPanel --sort self --json
-winapp perf analyze .\traces\scroll --view element --id e70 --depth 2 --json
-winapp perf analyze .\traces\scroll --view frames --offset 10 --limit 10 --json
-winapp perf analyze .\traces\scroll --view hotspots --min-frame-ms 16.67 --json
-winapp perf analyze .\traces\scroll --view events --event v123 --json
+winapp perf analyze .\traces\scroll
+winapp perf analyze .\traces\scroll --from-marker scenario-start --to-marker scenario-end
+winapp perf analyze .\traces\scroll --view elements --type ItemsStackPanel --sort self
+winapp perf analyze .\traces\scroll --view element --id e70 --depth 2
+winapp perf analyze .\traces\scroll --view frames --offset 10 --limit 10
+winapp perf analyze .\traces\scroll --view hotspots --min-frame-ms 16.67
+winapp perf analyze .\traces\scroll --view events --event v123
 ```
 
 Replace element and event IDs with IDs from your results.
@@ -146,9 +147,9 @@ rather than treating the entire frame duration as rendering work.
 
 ```powershell
 winapp perf analyze .\traces\scroll --view gc --from-ms 500 --to-ms 1500
-winapp perf analyze .\traces\scroll --view gc --from-marker scenario-start --to-marker scenario-end --json
-winapp perf analyze .\traces\scroll --view gc --sort duration --json
-winapp perf analyze .\traces\scroll --view gc --id gc7 --json
+winapp perf analyze .\traces\scroll --view gc --from-marker scenario-start --to-marker scenario-end
+winapp perf analyze .\traces\scroll --view gc --sort duration
+winapp perf analyze .\traces\scroll --view gc --id gc7
 ```
 
 Use a returned GC interval ID in place of `gc7` to inspect its boundaries and evidence.
