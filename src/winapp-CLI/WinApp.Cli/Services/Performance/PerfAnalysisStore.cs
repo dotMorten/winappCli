@@ -335,8 +335,12 @@ internal static class PerfAnalysisStore
         }
     }
 
-    private static void EnsureCacheOnly(string directory)
+    internal static void EnsureCacheOnly(string directory)
     {
+        if (PathSafety.IsReparsePoint(directory))
+        {
+            throw new IOException("The analysis cache directory cannot be a junction, symbolic link, or network path.");
+        }
         if (Directory.EnumerateDirectories(directory).Any() ||
             Directory.EnumerateFiles(directory).Any(p => Path.GetFileName(p) != "manifest.json" &&
                 !CacheFiles.Contains(Path.GetFileName(p), StringComparer.Ordinal)))

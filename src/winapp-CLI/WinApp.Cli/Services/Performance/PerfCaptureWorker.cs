@@ -123,7 +123,7 @@ internal sealed class PerfCaptureWorker : IDisposable
                     await PerfControlChannel.WriteAsync(pipe, response, PerfJsonContext.Default.PerfControlResponse,
                         responseTimeout.Token);
                 }
-                catch (Exception ex) when (ex is IOException or OperationCanceledException or JsonException)
+                catch (Exception ex) when (ex is IOException or OperationCanceledException or JsonException or InvalidDataException)
                 {
                     // A disconnected or malformed controller must not extend the capture deadline.
                     capture.LastControlError = "Control request failed: " + ex.Message;

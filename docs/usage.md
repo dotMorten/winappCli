@@ -1929,7 +1929,8 @@ as a credential, and is only ever persisted as a SHA-256 hash. See
 ### perf
 
 ```powershell
-winapp perf start --app 1234 --output .\traces\scenario --json
+$capture = winapp perf start --app 1234 --output .\traces\scenario --json | ConvertFrom-Json
+winapp perf stop $capture.captureId
 winapp perf analyze .\traces\scenario --json
 ```
 
@@ -2006,7 +2007,6 @@ stop reason, optional `frameArtifacts`, and warnings.
 > stills. Tracked in [#646](https://github.com/microsoft/winappCli/issues/646).
 
 For full documentation, see [docs/ui-automation.md](ui-automation.md).
-
 
 
 

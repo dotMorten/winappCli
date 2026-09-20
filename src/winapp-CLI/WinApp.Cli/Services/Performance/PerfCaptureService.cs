@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation and Contributors. All rights reserved.
 // Licensed under the MIT License.
 
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Security.AccessControl;
@@ -127,9 +128,17 @@ internal sealed class PerfCaptureService(IWinappDirectoryService directories, IA
                 capture.BuffersLost = null;
                 if (operation == "stop" && capture.Target is { } identity)
                 {
-                    using var target = identity.Open();
-                    var stopped = PrivateEtwSession.StopOwned(capture.SessionName, capture.SessionId, target.Id,
-                        Path.Join(capture.Directory, "trace.etl"));
+                    var stopped = false;
+                    try
+                    {
+                        using var target = identity.Open();
+                        stopped = PrivateEtwSession.StopOwned(capture.SessionName, capture.SessionId, target.Id,
+                            Path.Join(capture.Directory, "trace.etl"));
+                    }
+                    catch (Exception recoveryError) when (recoveryError is ArgumentException or InvalidOperationException or Win32Exception)
+                    {
+                        capture.Error += " Orphan recovery failed: " + recoveryError.Message;
+                    }
                     capture.StopQpc = Stopwatch.GetTimestamp();
                     capture.StoppedUtc = DateTime.UtcNow;
                     capture.StopReason = stopped ? "orphan-recovered" : "session-unavailable";

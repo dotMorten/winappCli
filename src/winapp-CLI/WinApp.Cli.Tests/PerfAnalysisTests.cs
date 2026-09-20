@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 using System.Buffers.Binary;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using WinApp.Cli.Commands;
@@ -210,6 +212,35 @@ public class PerfAnalysisTests
     }
 
     [TestMethod]
+    public void AnalysisCacheJunctionIsRejectedWithoutDeletingItsTarget()
+    {
+        var root = Directory.CreateTempSubdirectory("WinApp-Perf-Cache-");
+        var target = Directory.CreateTempSubdirectory("WinApp-Perf-Cache-Target-");
+        var link = Path.Join(root.FullName, "analysis");
+        var targetFile = Path.Join(target.FullName, "events.ndjson");
+        File.WriteAllText(targetFile, "must remain");
+        try
+        {
+            if (!TryCreateJunction(link, target.FullName))
+            {
+                Assert.Inconclusive("Could not create a junction on this machine.");
+            }
+
+            Assert.Throws<IOException>(() => PerfAnalysisStore.EnsureCacheOnly(link));
+            Assert.IsTrue(File.Exists(targetFile), "Rejecting a redirected cache must not delete its target files.");
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+            {
+                Directory.Delete(link);
+            }
+            root.Delete(recursive: true);
+            target.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void ProfileOptionsPreserveArgumentsAfterSeparator()
     {
         var command = new RunCommand();
@@ -243,6 +274,28 @@ public class PerfAnalysisTests
     {
         var identity = new PerfProcessIdentity(Environment.ProcessId, DateTime.MinValue);
         Assert.Throws<InvalidOperationException>(() => identity.Open());
+    }
+
+    private static bool TryCreateJunction(string link, string target)
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c mklink /J \"{link}\" \"{target}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+            process?.WaitForExit(5000);
+            return process?.ExitCode == 0 && Directory.Exists(link);
+        }
+        catch (Win32Exception)
+        {
+            return false;
+        }
     }
 
     [TestMethod]
