@@ -154,6 +154,20 @@ internal sealed class PerfCommand : Command, IShortDescription
                     if (row.Count is { } count)
                     {
                         console.WriteLine($"  count={count}; mean={Timing(row.MeanMs)}; max={Timing(row.MaxMs)}; p95={Timing(row.P95Ms)} ms");
+                        if (row.BoundaryOverlaps is > 0)
+                        {
+                            console.WriteLine($"  boundary overlaps={row.BoundaryOverlaps}; clipped overlap={Timing(row.ClippedOverlapMs)} ms");
+                        }
+                    }
+                    if (row.Event is { } perfEvent)
+                    {
+                        console.WriteLine($"  time={perfEvent.TimeMs:F3} ms; phase={perfEvent.Phase}; thread={perfEvent.Thread}");
+                        if (perfEvent.Fields.Count > 0)
+                        {
+                            console.WriteLine("  fields: " + string.Join(", ",
+                                perfEvent.Fields.OrderBy(field => field.Key, StringComparer.Ordinal)
+                                    .Select(field => field.Key + "=" + field.Value)));
+                        }
                     }
                     if (row.GcInterval is { } gc)
                     {

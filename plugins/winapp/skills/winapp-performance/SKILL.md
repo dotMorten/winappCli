@@ -13,18 +13,20 @@ description: Investigate slow WinUI 3 layout, scrolling and virtualization using
    rules as `winapp ui`. Use the returned `target.pid` for subsequent UI actions.
    For a new launch, use `winapp run <project> --profile <empty-directory> --detach --json`.
 3. Wait for successful recording readiness. Save the returned capture ID.
-4. Mark the beginning, drive a short repeatable scenario with verified UI selectors,
-   wait for its visible outcome, then mark the end. Use `winapp perf mark <id> --name <unique-name> --json`.
+4. Mark the beginning with `winapp perf mark <id> --name scenario-start --json`,
+   drive a short repeatable scenario with verified UI selectors, wait for its
+   visible outcome, then run `winapp perf mark <id> --name scenario-end --json`.
 5. Run `winapp perf stop <id> --json` before closing the app.
 6. Start frame triage with
-   `winapp perf analyze <directory> --view hotspots --json`; its default threshold
+   `winapp perf analyze <directory> --view hotspots --from-marker scenario-start --to-marker scenario-end --json`; its default threshold
    is 16.67 ms and each row includes dominant direct child operations. Expand a
-   returned operation with `--view call --id <call-id> --depth 2 --json`. Use
-   `--view calls --family layout --json` when the hotspot evidence points to
-   layout. Query `--view gc --sort duration --json` over the same range to find the
-   longest collection and suspension intervals, then inspect referenced interval
-   IDs. Use element and event views for source and evidence drill-down. Follow
-   `nextOffset`; do not dump NDJSON or ETL into context.
+   returned operation with `--view call --id <call-id> --depth 2 --from-marker
+   scenario-start --to-marker scenario-end --json`. Use `--view calls --family
+   layout` with the same marker range when the hotspot evidence points to layout.
+   Query `--view gc --sort duration` over the same marker range to find the longest
+   collection and suspension intervals, then inspect referenced interval IDs. Use
+   element and event views for source and evidence drill-down. Follow `nextOffset`;
+   do not dump NDJSON or ETL into context.
 7. Report observed cost, supporting event IDs, coverage gaps, and one concrete next
    experiment. Preserve stdout when partial results accompany a nonzero exit code.
 

@@ -65,6 +65,7 @@ internal sealed class PerfAnalyzer(Action<PerfCall> emitCall)
             stack = [];
             stacks.Add(e.Thread, stack);
         }
+        string? matchedScopeElement = null;
         if (e.Phase == "begin")
         {
             if (stack.Count >= 512)
@@ -90,6 +91,7 @@ internal sealed class PerfAnalyzer(Action<PerfCall> emitCall)
                 return element?.Id;
             }
             var scope = stack[match];
+            matchedScopeElement = scope.Element;
             for (var i = stack.Count - 1; i > match; i--)
             {
                 EmitIncomplete(stack[i], "missing-end");
@@ -129,7 +131,7 @@ internal sealed class PerfAnalyzer(Action<PerfCall> emitCall)
                 }
             }
         }
-        return element?.Id;
+        return element?.Id ?? matchedScopeElement;
     }
 
     public void Complete()

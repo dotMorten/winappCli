@@ -3,9 +3,13 @@
 
 using System.CommandLine;
 using System.Diagnostics;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 using WinApp.Cli.Commands;
+using WinApp.Cli.Services.Performance;
 
 namespace WinApp.Cli.Tests;
 
@@ -195,4 +199,130 @@ public class PerfCommandTests : BaseCommandTests
         using var error = JsonDocument.Parse(TestAnsiConsole.Output);
         StringAssert.Contains(error.RootElement.GetProperty("Error").GetString(), "require --profile");
     }
+
+    [TestMethod]
+    public async Task ConsoleRendererIncludesBoundaryOverlapTotals()
+    {
+        var directory = CreateCachedAnalysis(
+            [new("c1", "MeasureElement", "layout", 1, "e1", null, "v1", "v2",
+                0, 40, 40, 40, "complete", 40)],
+            elements: [new() { Id = "e1", ObjectId = "a", Type = "Panel" }]);
+        try
+        {
+            var exitCode = await ParseAndInvokeWithCaptureAsync(GetRequiredService<PerfCommand>(),
+                ["analyze", directory.FullName, "--view", "elements", "--from-ms", "5", "--to-ms", "35"]);
+
+            Assert.AreEqual(0, exitCode);
+            StringAssert.Contains(TestAnsiConsole.Output, "boundary");
+            StringAssert.Contains(TestAnsiConsole.Output, "30.000");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task ConsoleRendererIncludesEventTimestampPhaseAndFields()
+    {
+        var e = new PerfEvent("v1", 10, 10, 1, PerfProviders.Xaml, 47, 0, 1, Guid.Empty,
+            "MeasureElement", "layout", "begin", "a", new() { ["Width"] = "42" });
+        var directory = CreateCachedAnalysis([], events: [e]);
+        try
+        {
+            var exitCode = await ParseAndInvokeWithCaptureAsync(GetRequiredService<PerfCommand>(),
+                ["analyze", directory.FullName, "--view", "events", "--event", "v1"]);
+
+            Assert.AreEqual(0, exitCode);
+            StringAssert.Contains(TestAnsiConsole.Output, "10.000");
+            StringAssert.Contains(TestAnsiConsole.Output, "begin");
+            StringAssert.Contains(TestAnsiConsole.Output, "Width=42");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task PerformanceSkillBoundsInitialQueriesWithScenarioMarkers()
+    {
+        var source = await ReadRepositoryFileAsync(
+            "plugins", "winapp", "skills", "winapp-performance", "SKILL.md");
+        var initialQuery = source.Split('\n').Single(line => line.Contains("winapp perf analyze <directory> --view hotspots"));
+
+        StringAssert.Contains(initialQuery, "--from-marker");
+        StringAssert.Contains(initialQuery, "--to-marker");
+    }
+
+    private static async Task<string> ReadRepositoryFileAsync(params string[] path)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Join(directory.FullName, "version.json")))
+        {
+            directory = directory.Parent;
+        }
+        Assert.IsNotNull(directory, "Could not locate the repository root.");
+        return await File.ReadAllTextAsync(Path.Join([directory.FullName, .. path]), CancellationToken.None);
+    }
+
+    private static DirectoryInfo CreateCachedAnalysis(
+        IEnumerable<PerfCall> calls,
+        IEnumerable<PerfEvent>? events = null,
+        IEnumerable<PerfElement>? elements = null)
+    {
+        var directory = Directory.CreateTempSubdirectory("WinApp-Perf-Console-");
+        File.WriteAllBytes(Path.Join(directory.FullName, "trace.etl"), []);
+        using var process = Process.GetCurrentProcess();
+        var capture = new PerfCaptureDocument
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Directory = directory.FullName,
+            SessionId = Guid.NewGuid(),
+            SessionName = "WinApp-Perf-Test",
+            State = "completed",
+            Target = PerfProcessIdentity.Read(process),
+            ReadyQpc = 0,
+            StopQpc = 40,
+            Frequency = 1000,
+            EventsLost = 0,
+            BuffersLost = 0,
+            TraceFiles = ["trace.etl"],
+            Providers = PerfProviders.All.Where(provider => provider.Id == PerfProviders.Xaml).ToArray(),
+        };
+        capture.Save();
+
+        var cache = directory.CreateSubdirectory("analysis");
+        Write(cache, "calls.ndjson", calls, PerfJsonContext.Default.PerfCall);
+        Write(cache, "events.ndjson", events ?? [], PerfJsonContext.Default.PerfEvent);
+        Write(cache, "elements.ndjson", elements ?? [], PerfJsonContext.Default.PerfElement);
+        Write(cache, "gc.ndjson", [], PerfJsonContext.Default.PerfGcInterval);
+
+        var fingerprintMethod = typeof(PerfAnalysisStore).GetMethod(
+            "Fingerprint", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var fingerprint = (string)fingerprintMethod.Invoke(
+            null, [PerfCaptureDocument.Load(directory.FullName), CancellationToken.None])!;
+        var manifest = new PerfAnalysisManifest
+        {
+            Fingerprint = fingerprint,
+            FirstEventMs = 0,
+            LastEventMs = 40,
+            Events = events?.Count() ?? 0,
+            Calls = calls.Count(),
+            Elements = elements?.Count() ?? 0,
+            Families = new() { ["layout"] = 1 },
+        };
+        foreach (var file in new[] { "events.ndjson", "calls.ndjson", "elements.ndjson", "gc.ndjson" })
+        {
+            manifest.CacheHashes[file] = Convert.ToHexString(
+                SHA256.HashData(File.ReadAllBytes(Path.Join(cache.FullName, file))));
+        }
+        File.WriteAllText(Path.Join(cache.FullName, "manifest.json"),
+            JsonSerializer.Serialize(manifest, PerfJsonContext.Default.PerfAnalysisManifest));
+        return directory;
+    }
+
+    private static void Write<T>(DirectoryInfo directory, string name, IEnumerable<T> values, JsonTypeInfo<T> type) =>
+        File.WriteAllLines(Path.Join(directory.FullName, name),
+            values.Select(value => JsonSerializer.Serialize(value, type)));
 }

@@ -97,6 +97,19 @@ public class PerfAnalysisTests
     }
 
     [TestMethod]
+    public void MatchedStopEventInheritsTheScopesElementIdentity()
+    {
+        var analyzer = new PerfAnalyzer(_ => { });
+        analyzer.Accept(Event("Created", "info", 0, address: "a", family: "metadata"));
+        var beginElement = analyzer.Accept(Event("ApplyTemplate", "begin", 1, address: "a"));
+
+        var endElement = analyzer.Accept(Event("ApplyTemplate", "end", 2, address: null));
+
+        Assert.AreEqual(beginElement, endElement,
+            "An element-filtered events query must retain both boundaries of a matched element operation.");
+    }
+
+    [TestMethod]
     public void IntervalUnionDoesNotSumOverlappingScopes()
     {
         Assert.AreEqual(12, PerfAnalyzer.Union([(0, 10), (2, 5), (8, 12)]));

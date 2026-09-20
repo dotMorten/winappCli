@@ -100,6 +100,60 @@ public class PerfCallQueryTests
     }
 
     [TestMethod]
+    public void GcOnlyCaptureCannotReportSuccessfulEmptyUiHotspots()
+    {
+        using var fixture = new Fixture([], [PerfGcTests.Event("GCStart", 1)]);
+        fixture.Manifest.Families.Clear();
+        fixture.Manifest.Families["gc"] = 1;
+
+        Assert.Throws<InvalidDataException>(() => fixture.Query(new(View: "hotspots")));
+    }
+
+    [TestMethod]
+    public void EventsViewReturnsUnsupportedEvidenceForDiagnosis()
+    {
+        var unsupported = PerfGcTests.Event("UnknownEvent", 10) with
+        {
+            Provider = PerfProviders.Xaml,
+            Family = "unknown",
+            DecodeError = "unsupported descriptor",
+        };
+        using var fixture = new Fixture([], [unsupported]);
+        fixture.Manifest.Families.Clear();
+        fixture.Manifest.Families["unknown"] = 1;
+        fixture.Manifest.DecodeErrors = 1;
+
+        var result = fixture.Query(new(View: "events"));
+
+        Assert.AreEqual("v10UnknownEvent1", result.Rows.Single().Id);
+        Assert.IsFalse(result.Coverage.Complete);
+    }
+
+    [TestMethod]
+    public void KnownEventLossDoesNotCertifySpanningGcPauseOverlap()
+    {
+        var intervals = new List<PerfGcInterval>();
+        var analyzer = new PerfGcAnalyzer(intervals.Add);
+        analyzer.Accept(PerfGcTests.Event("GCSuspendEEBegin", 0, reason: 1));
+        analyzer.Accept(PerfGcTests.Event("GCSuspendEEEnd", 3));
+        analyzer.Accept(PerfGcTests.Event("GCRestartEEBegin", 97));
+        analyzer.Accept(PerfGcTests.Event("GCRestartEEEnd", 100));
+        analyzer.Complete();
+
+        using var fixture = new Fixture(
+            [Call("c1", 0, 100)],
+            [PerfGcTests.Event("GCStart", 0)],
+            [intervals.Single()]);
+        fixture.Capture.EventsLost = 1;
+        fixture.Manifest.CaptureReasons.Add("ETW loss is nonzero or unknown.");
+
+        var result = fixture.Query(new(View: "call", Id: "c1"));
+
+        Assert.IsNull(result.Rows.Single().GcOverlap,
+            "A pause reconstructed across known event loss cannot be used as certified overlap.");
+    }
+
+    [TestMethod]
     public void PartialGcDoesNotInvalidateUsableXamlButGcQueryIsPartial()
     {
         using var fixture = new Fixture([Call("c1", 0, 10)],
@@ -281,6 +335,7 @@ public class PerfCallQueryTests
     {
         private readonly DirectoryInfo directory = Directory.CreateTempSubdirectory("WinApp-Perf-Tree-");
         private readonly PerfCaptureDocument capture;
+        public PerfCaptureDocument Capture => capture;
         public PerfAnalysisManifest Manifest { get; }
 
         public Fixture(IEnumerable<PerfCall> calls, PerfEvent[]? events = null, PerfGcInterval[]? gc = null, PerfElement[]? elements = null)

@@ -120,8 +120,13 @@ internal static class PerfQuery
     {
         Validate(options);
         var manifest = analysis.Manifest;
-        if (!manifest.Families.Any(p => p.Key is not ("metadata" or "unknown") && p.Value > 0) &&
-            !(options.View == "gc" && manifest.Events > 0))
+        var hasRequestedEvidence = options.View switch
+        {
+            "events" => manifest.Events > 0,
+            "gc" => manifest.Events > 0,
+            _ => manifest.Families.Any(p => p.Key is not ("metadata" or "unknown" or "gc") && p.Value > 0),
+        };
+        if (!hasRequestedEvidence)
         {
             throw new InvalidDataException("No usable requested performance evidence was recorded. Exercise the UI while recording and retry.");
         }
@@ -331,7 +336,10 @@ internal static class PerfQuery
             reasons.Add("Incomplete CLR collection/suspension boundaries overlap or may overlap the selected range.");
         }
         var page = rows.Skip(options.Offset).Take(options.Limit).ToList();
-        if (gcAvailability == "observed")
+        var gcOverlapReliable = analysis.Capture.EventsLost == 0 &&
+            analysis.Capture.BuffersLost == 0 &&
+            manifest.ReaderEventsLost == 0;
+        if (gcAvailability == "observed" && gcOverlapReliable)
         {
             page = page.Select(row => WithGcOverlap(row, gc, range)).ToList();
         }
