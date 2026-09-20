@@ -189,7 +189,7 @@ public sealed class PerfEtwTests
         {
             var provider = Guid.NewGuid();
             RegistrationHandle registration;
-            Assert.AreEqual(0u, Native.EventRegister(in provider, null, null, &registration));
+            Assert.AreEqual(0u, Native.EventRegister(in provider, null, null, out registration));
             try
             {
                 using var trace = new PrivateEtwSession("WinApp-Perf-Test-" + Guid.NewGuid().ToString("N"),
