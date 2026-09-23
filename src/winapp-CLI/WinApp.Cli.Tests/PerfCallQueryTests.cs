@@ -42,6 +42,185 @@ public class PerfCallQueryTests
     }
 
     [TestMethod]
+    public void SummaryPartitionsPrimaryUiThreadWithoutDoubleCounting()
+    {
+        var parse = Call("parse", 25, 30, "layout") with
+        {
+            Name = "ParseXaml", Family = "parsing", BeginEvent = "parse-begin",
+        };
+        var calls = new[]
+        {
+            Frame("frame", 0, 100) with { Thread = 7 },
+            Frame("other-frame", 0, 40) with { Thread = 8 },
+            Call("callback", 10, 60, "frame") with { Name = "EventCallback", Family = "input", Thread = 7 },
+            Call("layout", 20, 40, "callback") with { Thread = 7 },
+            parse with { Thread = 7 },
+            Call("image", 40, 50, "callback") with { Name = "ImageCacheDecode", Family = "images", Thread = 7 },
+            Call("off-thread-image", 0, 90) with { Name = "OffThreadDecode", Family = "images", Thread = 8 },
+            Call("render", 60, 80, "frame") with { Name = "RenderWalk", Family = "frames", Thread = 7 },
+            Call("framework", 80, 90, "frame") with { Name = "PublicApiCall:SetValue", Family = "framework", Thread = 7 },
+        };
+        var parseEvent = PerfGcTests.Event("ParseXaml", 25, thread: 7) with
+        {
+            Id = "parse-begin", Provider = PerfProviders.Xaml, Family = "parsing", Phase = "begin",
+            Fields = new() { ["URI"] = "Views/MainPage.xaml" },
+        };
+        using var fixture = new Fixture(calls, [parseEvent]);
+
+        var result = fixture.Query(new(View: "summary", Limit: 100));
+
+        Assert.AreEqual(7u, result.PrimaryUiThread);
+        Assert.AreEqual(100d, result.Activity!.Sum(category => category.ObservedMs), 0.000001);
+        AssertActivity(result, "Parsing", 5);
+        AssertActivity(result, "Layout", 15);
+        AssertActivity(result, "Render", 20);
+        AssertActivity(result, "App callbacks", 20);
+        AssertActivity(result, "Other observed XAML", 10);
+        AssertActivity(result, "Image decode/load", 10);
+        AssertActivity(result, "Unclassified", 20);
+        Assert.AreEqual("Views/MainPage.xaml", result.ParsingResources!.Single().Resource);
+        Assert.AreEqual(5d, result.ParsingResources!.Single().ObservedMs);
+        Assert.IsTrue(result.Rows.Any(row => row.Id == "phase:OffThreadDecode"),
+            "Automatic overview thread selection must not narrow the existing detailed summary.");
+    }
+
+    [TestMethod]
+    public void FrameCountSelectsPrimaryThreadBeforeFrameUnionAndThreadOverrideWins()
+    {
+        var calls = new[]
+        {
+            Frame("long", 0, 80) with { Thread = 20 },
+            Frame("first", 0, 10) with { Thread = 10 },
+            Frame("second", 20, 30) with { Thread = 10 },
+            Call("thread-10-layout", 0, 30, "first") with { Thread = 10 },
+            Call("thread-20-layout", 0, 80, "long") with { Thread = 20 },
+        };
+        using var fixture = new Fixture(calls);
+
+        Assert.AreEqual(10u, fixture.Query(new(View: "summary")).PrimaryUiThread);
+        Assert.AreEqual(20u, fixture.Query(new(View: "summary", Thread: 20)).PrimaryUiThread);
+        Assert.Throws<ArgumentException>(() => fixture.Query(new(View: "summary", Thread: 99)));
+    }
+
+    [TestMethod]
+    public void ImageOnlyWorkerCannotBecomeAutomaticPrimaryUiThread()
+    {
+        var calls = new[]
+        {
+            Call("ui-layout", 0, 10) with { Thread = 7 },
+            Call("worker-image", 0, 90) with { Name = "OffThreadDecode", Family = "images", Thread = 42 },
+        };
+        using var fixture = new Fixture(calls);
+
+        var result = fixture.Query(new(View: "summary"));
+
+        Assert.AreEqual(7u, result.PrimaryUiThread);
+        AssertActivity(result, "Image decode/load", 0);
+    }
+
+    [TestMethod]
+    public void ParsingPreviewIsBoundedAndParsingViewPagesAllResources()
+    {
+        var calls = new List<PerfCall>();
+        var events = new List<PerfEvent>();
+        for (var index = 0; index < 12; index++)
+        {
+            var id = "parse-" + index;
+            calls.Add(Call(id, index * 2, index * 2 + 1) with
+            {
+                Name = "ParseXaml", Family = "parsing", BeginEvent = id + "-begin",
+            });
+            events.Add(PerfGcTests.Event("ParseXaml", index * 2) with
+            {
+                Id = id + "-begin", Provider = PerfProviders.Xaml, Family = "parsing", Phase = "begin",
+                Fields = new() { ["URI"] = $"Resource-{index:D2}.xaml" },
+            });
+        }
+        using var fixture = new Fixture(calls, events.ToArray());
+
+        var summary = fixture.Query(new(View: "summary", Limit: 100));
+        var page = fixture.Query(new(View: "parsing", Limit: 5, Offset: 5));
+
+        Assert.AreEqual(10, summary.ParsingResources!.Count);
+        Assert.AreEqual(12, summary.ParsingResourcesTotal);
+        Assert.AreEqual(2, summary.ParsingResourcesOmitted);
+        Assert.AreEqual(12, page.Total);
+        Assert.AreEqual(5, page.Returned);
+        Assert.AreEqual(10, page.NextOffset);
+        Assert.IsTrue(page.Rows.All(row => row.Kind == "parsing-resource"));
+    }
+
+    [TestMethod]
+    public void NestedParsingScopesAreUnionedByResource()
+    {
+        var calls = new[]
+        {
+            Call("load", 0, 10) with
+            {
+                Name = "ApplicationLoadComponent", Family = "parsing", BeginEvent = "load-begin",
+            },
+            Call("parse", 2, 8, "load") with
+            {
+                Name = "ParseXaml", Family = "parsing", BeginEvent = "parse-begin",
+            },
+        };
+        var events = new[]
+        {
+            PerfGcTests.Event("ApplicationLoadComponent", 0) with
+            {
+                Id = "load-begin", Provider = PerfProviders.Xaml, Family = "parsing", Phase = "begin",
+                Fields = new() { ["ComponentName"] = "Views/MainPage.xaml" },
+            },
+            PerfGcTests.Event("ParseXaml", 2) with
+            {
+                Id = "parse-begin", Provider = PerfProviders.Xaml, Family = "parsing", Phase = "begin",
+                Fields = new() { ["URI"] = "Views/MainPage.xaml" },
+            },
+        };
+        using var fixture = new Fixture(calls, events);
+
+        var result = fixture.Query(new(View: "summary"));
+
+        AssertActivity(result, "Parsing", 10);
+        Assert.AreEqual(10d, result.ParsingResources!.Single().ObservedMs);
+        Assert.AreEqual(2, result.ParsingResources!.Single().Count);
+    }
+
+    [TestMethod]
+    public void MarkersClipActivityAndParsingTogether()
+    {
+        var parse = Call("parse", 10, 30) with
+        {
+            Name = "ParseXaml", Family = "parsing", BeginEvent = "parse-begin",
+        };
+        var parseEvent = PerfGcTests.Event("ParseXaml", 10) with
+        {
+            Id = "parse-begin", Provider = PerfProviders.Xaml, Family = "parsing", Phase = "begin",
+            Fields = new() { ["URI"] = "Views/MainPage.xaml" },
+        };
+        using var fixture = new Fixture([parse], [parseEvent]);
+        fixture.Capture.Markers.Add(new("start", 15));
+        fixture.Capture.Markers.Add(new("end", 25));
+
+        var result = fixture.Query(new(View: "summary", FromMarker: "start", ToMarker: "end"));
+
+        Assert.AreEqual(new PerfRange(15, 25), result.Range);
+        AssertActivity(result, "Parsing", 10);
+        Assert.AreEqual(10d, result.ParsingResources!.Single().ObservedMs);
+    }
+
+    [TestMethod]
+    public void ZeroLengthSummaryHasNoPercentages()
+    {
+        using var fixture = new Fixture([Frame("frame", 0, 10), Call("layout", 0, 10, "frame")]);
+
+        var result = fixture.Query(new(View: "summary", FromMs: 5, ToMs: 5));
+
+        Assert.IsTrue(result.Activity!.All(category => category.ObservedMs == 0));
+        Assert.IsTrue(result.Activity!.All(category => category.RangePercent is null));
+    }
+
+    [TestMethod]
     public void OutOfRangeAndOtherThreadErrorsRemainCaptureContextNotLocalErrors()
     {
         using var fixture = new Fixture([Call("c1", 10, 20)],
@@ -309,6 +488,9 @@ public class PerfCallQueryTests
 
     private static PerfCall Frame(string id, double start, double end) =>
         Call(id, start, end) with { Name = "Frame", Family = "frames" };
+
+    private static void AssertActivity(PerfQueryResult result, string category, double expected) =>
+        Assert.AreEqual(expected, result.Activity!.Single(row => row.Category == category).ObservedMs, 0.000001, category);
 
     [TestMethod]
     public void HalfMillionCompleteCallsRemainBoundedAndPageable()

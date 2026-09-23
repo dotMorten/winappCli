@@ -19,6 +19,17 @@ namespace WinApp.Cli.Tests;
 public sealed class PerfEtwTests
 {
     [TestMethod]
+    public void XamlProviderCapturesParserAppModelAndImageKeywords()
+    {
+        var provider = PerfProviders.All.Single(candidate => candidate.Id == PerfProviders.Xaml);
+        var keywords = Convert.ToUInt64(provider.Keywords, 16);
+
+        Assert.AreNotEqual(0UL, keywords & 0x10UL, "Parser keyword");
+        Assert.AreNotEqual(0UL, keywords & 0x100UL, "AppModel keyword");
+        Assert.AreNotEqual(0UL, keywords & 0x20000UL, "Images keyword");
+    }
+
+    [TestMethod]
     public void ZeroSessionHandleCannotEnableButStillOwnsCleanup()
     {
         var api = new FakeEtwApi();

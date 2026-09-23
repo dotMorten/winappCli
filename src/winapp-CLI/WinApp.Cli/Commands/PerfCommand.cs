@@ -41,7 +41,7 @@ internal sealed class PerfCommand : Command, IShortDescription
             var identity = PerfProcessIdentity.Read(target);
             var registration = await service.PrepareAsync(parse.GetRequiredValue(output), parse.GetValue(duration), parse.GetValue(size), token);
             var capture = await PerfCaptureService.BindAsync(registration, identity, "attached; startup not recorded", false, token);
-            PrintCapture(capture, parse.GetValue(WinAppRootCommand.JsonOption), console);
+            PrintCapture(capture, parse.GetValue(WinAppRootCommand.JsonOption), console, "start");
             return 0;
         }));
         Subcommands.Add(start);
@@ -64,9 +64,9 @@ internal sealed class PerfCommand : Command, IShortDescription
             Configure(command);
             command.SetAction(async (parse, token) => await ExecuteAsync(parse, async () =>
             {
-                var capture = await service.ControlAsync(parse.GetRequiredValue(id), operation,
-                    operation == "mark" ? parse.GetRequiredValue(name) : null, token);
-                PrintCapture(capture, parse.GetValue(WinAppRootCommand.JsonOption), console);
+                var markerName = operation == "mark" ? parse.GetRequiredValue(name) : null;
+                var capture = await service.ControlAsync(parse.GetRequiredValue(id), operation, markerName, token);
+                PrintCapture(capture, parse.GetValue(WinAppRootCommand.JsonOption), console, operation, markerName);
                 if (capture.State == "failed")
                 {
                     EmitError(parse.GetValue(WinAppRootCommand.JsonOption), "capture_incomplete", capture.Error ?? "Capture failed.", true);
@@ -79,7 +79,7 @@ internal sealed class PerfCommand : Command, IShortDescription
 
         var analyze = new Command("analyze", "Query a finalized winapp capture directory. ETL stays authoritative; derived NDJSON is cached locally. Partial evidence is returned with nonzero exit status.");
         var directory = new Argument<string>("directory") { Description = "Capture directory containing capture.json and its ETL files." };
-        var view = new Option<string>("--view") { Description = "summary, elements, element, frames, hotspots, events, calls, call, or gc.", DefaultValueFactory = _ => "summary" };
+        var view = new Option<string>("--view") { Description = "summary, parsing, elements, element, frames, hotspots, events, calls, call, or gc.", DefaultValueFactory = _ => "summary" };
         var limit = new Option<int>("--limit") { Description = "Rows per page, 1-100.", DefaultValueFactory = _ => 10 };
         var offset = new Option<int>("--offset") { Description = "Zero-based row offset.", DefaultValueFactory = _ => 0 };
         var maxBytes = new Option<int>("--max-bytes") { Description = "Whole JSON response byte budget, 4096-1048576.", DefaultValueFactory = _ => 16384 };
@@ -127,10 +127,45 @@ internal sealed class PerfCommand : Command, IShortDescription
             }
             else
             {
-                console.WriteLine($"Capture {result.CaptureId}: {result.View}, {result.Range.FromMs:F2}-{result.Range.ToMs:F2} ms");
-                console.WriteLine($"{"Operation / element",-42} {"Elapsed ms",9} {"Exclusive",10} {"Elem self",9}");
+                var threadDescription = result.PrimaryUiThread is { } primaryThread
+                    ? $", primary UI thread {primaryThread}"
+                    : "";
+                console.MarkupLineInterpolated($"[dim]Capture {result.CaptureId}: {result.View}{threadDescription}, {result.Range.FromMs:F2}-{result.Range.ToMs:F2} ms[/]");
+                if (result.Activity is { } activity)
+                {
+                    WriteSection(console, "Observed UI-thread activity");
+                    console.MarkupLine("[dim]Elapsed occupancy, not CPU utilization[/]");
+                    console.MarkupLineInterpolated($"[grey]{"Category",-28} {"Observed ms",11} {"Range %",8}[/]");
+                    foreach (var category in activity)
+                    {
+                        console.WriteLine($"{category.Category,-28} {category.ObservedMs,11:F3} {(category.RangePercent is { } percent ? percent.ToString("F1") : "n/a"),8}");
+                    }
+                    if (result.ParsingResources is { Count: > 0 } resources)
+                    {
+                        WriteSection(console, "Parsing by resource");
+                        console.MarkupLineInterpolated($"[grey]{"Resource",-42} {"Observed ms",11} {"Count",7}[/]");
+                        foreach (var resource in resources)
+                        {
+                            console.WriteLine($"{Label(resource.Resource, 42),-42} {resource.ObservedMs,11:F3} {resource.Count,7}");
+                        }
+                        if (result.ParsingResourcesOmitted is > 0)
+                        {
+                            console.WriteLine($"{result.ParsingResourcesOmitted} more resources; use --view parsing for the complete pageable list.");
+                        }
+                    }
+                    WriteSection(console, "Detailed summary");
+                }
+                var columnHeaders = result.View == "parsing"
+                    ? $"{"Resource",-42} {"Observed ms",11} {"Count",7}"
+                    : $"{"Operation / element",-42} {"Elapsed ms",9} {"Exclusive",10} {"Elem self",9}";
+                console.MarkupLineInterpolated($"[grey]{columnHeaders}[/]");
                 foreach (var row in result.Rows)
                 {
+                    if (result.View == "parsing")
+                    {
+                        console.WriteLine($"{Label(row.Name ?? row.Id, 42),-42} {row.InclusiveMs,11:F3} {row.Count,7}");
+                        continue;
+                    }
                     var indent = new string(' ', (row.Depth ?? 0) * 2);
                     var label = indent + row.Id + " " +
                         (row.Name ?? row.Event?.Name ?? row.Element?.Type);
@@ -151,13 +186,13 @@ internal sealed class PerfCommand : Command, IShortDescription
                     {
                         console.WriteLine($"{indent}  {element.Id} {element.Type ?? "type not observed"} {element.Source}:{element.Line}");
                     }
-                    if (row.Count is { } count)
+                    if (result.View != "summary" && row.Count is { } count)
                     {
                         console.WriteLine($"  count={count}; mean={Timing(row.MeanMs)}; max={Timing(row.MaxMs)}; p95={Timing(row.P95Ms)} ms");
-                        if (row.BoundaryOverlaps is > 0)
-                        {
-                            console.WriteLine($"  boundary overlaps={row.BoundaryOverlaps}; clipped overlap={Timing(row.ClippedOverlapMs)} ms");
-                        }
+                    }
+                    if (row.BoundaryOverlaps is > 0)
+                    {
+                        console.WriteLine($"  boundary overlaps={row.BoundaryOverlaps}; clipped overlap={Timing(row.ClippedOverlapMs)} ms");
                     }
                     if (row.Event is { } perfEvent)
                     {
@@ -185,7 +220,7 @@ internal sealed class PerfCommand : Command, IShortDescription
                             console.WriteLine(indent + "    evidence: " + string.Join(", ", operation.Evidence));
                         }
                     }
-                    if (row.Evidence.Length > 0)
+                    if (result.View != "summary" && row.Evidence.Length > 0)
                     {
                         console.WriteLine(indent + "  evidence: " + string.Join(", ", row.Evidence));
                     }
@@ -194,20 +229,35 @@ internal sealed class PerfCommand : Command, IShortDescription
                         console.WriteLine($"  More children: query --view call --id {row.Id} --depth 2.");
                     }
                 }
-                console.WriteLine($"GC coverage: {result.GcCoverage?.Availability}; selected-range complete={result.GcCoverage?.Complete}. {result.GcCoverage?.Error}");
-                foreach (var reason in result.Coverage.Reasons)
+                if (result.View != "summary")
                 {
-                    console.WriteLine("Coverage: " + reason);
+                    console.WriteLine($"GC coverage: {result.GcCoverage?.Availability}; selected-range complete={result.GcCoverage?.Complete}. {result.GcCoverage?.Error}");
                 }
-                console.WriteLine($"Returned {result.Returned}/{result.Total}; next offset: {result.NextOffset?.ToString() ?? "none"}.");
-                foreach (var limitation in result.Limitations)
+                console.WriteLine();
+                console.MarkupLineInterpolated($"[dim]Returned {result.Returned}/{result.Total}[/]");
+                if (result.NextOffset is { } nextOffset)
                 {
-                    console.WriteLine(limitation);
+                    var nextArguments = new List<string> { "perf", "analyze", parse.GetRequiredValue(directory) };
+                    foreach (var option in analyze.Options.Where(option => option != offset))
+                    {
+                        if (parse.GetResult(option) is { Implicit: false } supplied)
+                        {
+                            nextArguments.Add(option.Name);
+                            nextArguments.AddRange(supplied.Tokens.Select(token => token.Value));
+                        }
+                    }
+                    nextArguments.Add("--offset");
+                    nextArguments.Add(nextOffset.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    console.WriteLine("Next page: winapp " + string.Join(' ', nextArguments.Select(WindowsCommandLine.EscapeArgument)));
                 }
             }
             if (!result.Coverage.Complete)
             {
-                EmitError(json, "partial_data", "Partial evidence returned. See coverage.reasons and the capture/cache manifests.", true);
+                var message = json
+                    ? "Partial evidence returned. See coverage.reasons and the capture/cache manifests."
+                    : "Results may be incomplete:" + Environment.NewLine +
+                        string.Join(Environment.NewLine, result.Coverage.Reasons.Select(reason => "- " + reason));
+                EmitError(json, "partial_data", message, true);
                 return Task.FromResult(1);
             }
             return Task.FromResult(0);
@@ -220,6 +270,15 @@ internal sealed class PerfCommand : Command, IShortDescription
         command.Options.Add(WinAppRootCommand.JsonOption);
         command.Options.Add(WinAppRootCommand.VerboseOption);
         command.Options.Add(WinAppRootCommand.QuietOption);
+    }
+
+    private static string Label(string value, int width) =>
+        value.Length <= width ? value : value[..(width - 3)] + "...";
+
+    private static void WriteSection(IAnsiConsole console, string title)
+    {
+        console.WriteLine();
+        console.Write(new Rule($"[bold]{Markup.Escape(title)}[/]").LeftJustified().RuleStyle("grey35"));
     }
 
     private static async Task<int> ExecuteAsync(ParseResult parse, Func<Task<int>> action)
@@ -250,7 +309,8 @@ internal sealed class PerfCommand : Command, IShortDescription
         }
     }
 
-    private static void PrintCapture(PerfCaptureDocument capture, bool json, IAnsiConsole console)
+    internal static void PrintCapture(PerfCaptureDocument capture, bool json, IAnsiConsole console,
+        string operation, string? markerName = null)
     {
         if (json)
         {
@@ -258,8 +318,30 @@ internal sealed class PerfCommand : Command, IShortDescription
         }
         else
         {
-            console.WriteLine($"{capture.Id}: {capture.State} - {capture.Directory}");
-            console.WriteLine($"Status/stop: winapp perf status {capture.Id} / winapp perf stop {capture.Id}");
+            if (operation == "status")
+            {
+                console.WriteLine($"Capture state: {capture.State}.");
+                if (capture.StopReason is { } reason)
+                {
+                    console.WriteLine($"Stop reason: {reason}.");
+                }
+            }
+            else if (capture.State != "failed")
+            {
+                switch (operation)
+                {
+                    case "start":
+                        console.WriteLine($"Capture ID: {capture.Id}");
+                        console.WriteLine($"Stop: winapp perf stop {capture.Id}");
+                        break;
+                    case "mark":
+                        console.WriteLine($"Added mark {markerName}");
+                        break;
+                    case "stop":
+                        console.WriteLine("Recording stopped.");
+                        break;
+                }
+            }
             foreach (var warning in capture.Warnings)
             {
                 console.WriteLine(warning);

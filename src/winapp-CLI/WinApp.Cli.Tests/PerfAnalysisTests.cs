@@ -157,6 +157,45 @@ public class PerfAnalysisTests
     }
 
     [TestMethod]
+    public void LegacyParserAndImageScopesUseVerifiedPayloadContracts()
+    {
+        var uri = Encoding.Unicode.GetBytes("Views/MainPage.xaml\0");
+        var parse = WinUiEventDecoder.Decode(new PerfRawEvent(10, 1, 7, PerfProviders.Xaml, 1, 0, 1,
+            Guid.Empty, 8, false, uri, null, null, null), "v1", 0, 1000)!;
+        var image = WinUiEventDecoder.Decode(new PerfRawEvent(20, 1, 7, PerfProviders.Xaml, 145, 0, 1,
+            Guid.Empty, 8, false, uri, null, null, null), "v2", 0, 1000)!;
+        var versionedImage = WinUiEventDecoder.Decode(new PerfRawEvent(30, 1, 7, PerfProviders.Xaml, 360, 1, 1,
+            Guid.Empty, 8, false, new byte[48], null, null, null), "v3", 0, 1000)!;
+
+        Assert.AreEqual(("ParseXaml", "parsing", "begin", "Views/MainPage.xaml"),
+            (parse.Name, parse.Family, parse.Phase, parse.Fields["URI"]));
+        Assert.AreEqual(("ImageCacheDecode", "images", "begin", "Views/MainPage.xaml"),
+            (image.Name, image.Family, image.Phase, image.Fields["URI"]));
+        Assert.IsNull(versionedImage.DecodeError);
+        Assert.AreEqual("DecodeToRenderSize", versionedImage.Name);
+        Assert.AreEqual("0", versionedImage.Fields["DecodeWidth"]);
+    }
+
+    [TestMethod]
+    public void SelfDescribingParserAndImagePairsNormalizeOnlyKnownScopes()
+    {
+        static PerfEvent Decode(string name, Dictionary<string, string> fields) =>
+            WinUiEventDecoder.Decode(new PerfRawEvent(10, 1, 7, PerfProviders.Operational, 0, 0, 0,
+                Guid.Empty, 8, true, [], name, fields, null), "v1", 0, 1000)!;
+
+        var parse = Decode("Application_LoadComponent",
+            new() { ["IsStart"] = "true", ["Uri"] = "Views/MainPage.xaml" });
+        var image = Decode("DecodeToRenderSizeStop", new() { ["Id"] = "42" });
+        var informational = Decode("QueueOffThreadDecode", new() { ["Id"] = "42" });
+
+        Assert.AreEqual(("Application_LoadComponent", "parsing", "begin"),
+            (parse.Name, parse.Family, parse.Phase));
+        Assert.AreEqual(("DecodeToRenderSize", "images", "end"),
+            (image.Name, image.Family, image.Phase));
+        Assert.AreEqual("info", informational.Phase);
+    }
+
+    [TestMethod]
     public void OversizedRowsProduceValidBoundedJsonAndProgressingPagination()
     {
         var result = new PerfQueryResult
@@ -192,6 +231,7 @@ public class PerfAnalysisTests
         Assert.Throws<ArgumentException>(() => PerfQuery.Validate(new(View: "frames", MinFrameMs: 10)));
         Assert.Throws<ArgumentException>(() => PerfQuery.Validate(new(View: "calls", Sort: "duration")));
         Assert.Throws<ArgumentException>(() => PerfQuery.Validate(new(View: "gc", Sort: "count")));
+        PerfQuery.Validate(new(View: "parsing"));
     }
 
     [TestMethod]

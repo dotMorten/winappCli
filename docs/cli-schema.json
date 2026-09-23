@@ -2846,7 +2846,7 @@
               "recursive": false
             },
             "--view": {
-              "description": "summary, elements, element, frames, hotspots, events, calls, call, or gc.",
+              "description": "summary, parsing, elements, element, frames, hotspots, events, calls, call, or gc.",
               "hidden": false,
               "valueType": "System.String",
               "hasDefaultValue": true,

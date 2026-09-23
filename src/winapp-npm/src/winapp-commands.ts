@@ -906,7 +906,7 @@ export interface PerfAnalyzeOptions extends CommonOptions {
   toMs?: number;
   /** Observed type substring for elements/element views. */
   type?: string;
-  /** summary, elements, element, frames, hotspots, events, calls, call, or gc. */
+  /** summary, parsing, elements, element, frames, hotspots, events, calls, call, or gc. */
   view?: string;
 }
 

@@ -1,4 +1,4 @@
-# Find expensive WinUI layout, scrolling work, and GC context
+# Find expensive WinUI parsing, layout, rendering, and GC context
 
 ```powershell
 winapp run . --profile .\traces\startup --detach
@@ -7,7 +7,7 @@ winapp run . --profile .\traces\startup --detach
 This launches your project and starts a bounded native WinUI 3 ETW recording.
 Use the returned capture ID with `winapp perf status` or `winapp perf stop`.
 The default recording lasts 30 seconds and allows 128 MiB of raw ETL. Override
-these with `--profile-duration-sec` (1-300) and `--profile-max-size-mib` (1-1024).
+these with `--duration-sec` (1-300) and `--profile-max-size-mib` (1-1024).
 Without `--detach`, `run` continues waiting for the app after recording finishes.
 Stopping a recording never closes the app.
 Closing the app ends and finalizes its recording immediately, including with
@@ -24,7 +24,7 @@ the app initializes. If it times out, let the app finish starting and record its
 PID with `perf start` instead. `--no-launch` cannot be combined with
 `--profile`. Existing `run` restrictions still apply; for example,
 `--debug-output` cannot be combined with `--detach` or `--json`. Debugger pauses
-perturb elapsed timings when profiling and debug output are used together.
+distort elapsed timings, so avoid attaching a debugger while profiling.
 
 ## Record an existing app
 
@@ -38,6 +38,8 @@ winapp perf stop CAPTURE_ID
 ```
 
 Replace `CAPTURE_ID` with the returned `id`, and `MyWinUIApp` with your app.
+`start` prints the capture ID and stop command. `mark` confirms the added marker
+name, and `stop` confirms that recording stopped. Warnings remain visible.
 Add `--json` when a script or agent needs structured capture state and IDs.
 `start` returns after the worker's control channel and provider enablement are
 ready, not after proving that useful events have been recorded. The recorder
@@ -59,7 +61,9 @@ specific window title.
 
 The corresponding limit options are `--duration-sec` and
 `--max-size-mib`. A recording also stops when the target exits or its size limit
-is reached. `status` reports lifecycle state and final errors; `stop` is repeatable.
+is reached. Use `winapp perf status CAPTURE_ID` to check whether a background
+recording is still running or has ended, including its stop reason and any final
+errors, without stopping it. `stop` is repeatable.
 If a worker disappears, status reports failure rather than success. A later
 `stop` attempts cleanup only when the recorded process and ETW session identities
 still match. Unknown loss remains unknown after recovery.
@@ -67,11 +71,52 @@ still match. Unknown loss remains unknown after recovery.
 The output directory must be empty. Keep it until you no longer need the evidence,
 and move captures only after stopping them.
 
-## Ask narrow questions
+## Analyze the recording
 
 ```powershell
-winapp perf analyze .\traces\scroll
 winapp perf analyze .\traces\scroll --from-marker scenario-start --to-marker scenario-end
+```
+
+The default report starts with observed activity on the primary UI thread, then
+lists the 10 XAML resources with the most parsing time, followed by the detailed
+operation ranking. The text report skips the parsing-resource section when it is
+empty. Each activity interval belongs to only one category, so nested
+layout or parsing is not counted again as app-callback or framework time.
+Percentages use the selected range's wall-clock duration, not sampled CPU time.
+The text summary omits per-operation evidence IDs and count/mean/max/p95
+statistics for readability. Add `--json` to include them, or use a drill-down
+view for more detail.
+Its footer shows the returned row count and, when more rows exist, a next-page
+command with the same range and filters. Coverage details remain in JSON;
+incomplete evidence still produces a nonzero exit status.
+All text views omit the repeated interpretation disclaimers; use `--json` to
+include the structured `limitations` field.
+
+| Category | What it includes |
+|---|---|
+| Parsing | Timed XAML parsing and component-loading scopes |
+| Layout | Template application, measure, arrange, and related timed layout scopes |
+| Render | Concrete UI-thread render-walk and frame-submission scopes; the enclosing frame is not counted as rendering |
+| App callbacks | Timed application event callbacks invoked by XAML |
+| Other observed XAML | Other timed XAML framework, input, scrolling, virtualization, and initialization work |
+| Image decode/load | Timed image work on the selected UI thread; off-thread decode does not contribute |
+| Unclassified | The remaining selected-range time, including idle, waits, and uninstrumented work |
+
+Without `--thread`, analysis chooses the thread with the most complete frames in
+the selected range, breaking ties by observed frame time and then thread ID. If
+no frame is available, it chooses the thread with the most non-image WinUI
+activity. Use `--thread <id>` to override that choice.
+
+The parsing preview reports selected-range time, so a parse that crosses a marker
+or timestamp boundary is clipped. To page every observed resource, run:
+
+```powershell
+winapp perf analyze .\traces\scroll --view parsing --from-marker scenario-start --to-marker scenario-end
+```
+
+Use narrower views to investigate the overview:
+
+```powershell
 winapp perf analyze .\traces\scroll --view elements --type ItemsStackPanel --sort self
 winapp perf analyze .\traces\scroll --view element --id e70 --depth 2
 winapp perf analyze .\traces\scroll --view frames --offset 10 --limit 10
@@ -83,7 +128,8 @@ Replace element and event IDs with IDs from your results.
 
 | View | What it returns |
 |---|---|
-| `summary` | Recorded phases and element lifetimes ranked by exclusive phase time or element self time |
+| `summary` | Primary-UI-thread activity, the 10 hottest parsed resources, then recorded phases and elements ranked by exclusive or self time |
+| `parsing` | Complete pageable XAML resource ranking by observed parsing time |
 | `elements` | Element rankings; `--type` filters observed type names, and `--sort` accepts `self`, `inclusive`, or `count` |
 | `element` | One trace-local element and, with `--depth`, elements observed beneath it during the selected range |
 | `frames` | UI-side frame, render-walk and submission intervals, longest first |
@@ -93,8 +139,9 @@ Replace element and event IDs with IDs from your results.
 | `call` | One operation and its execution subtree, selected with `--id`; default depth 2, maximum 4 |
 | `gc` | CLR collection lifetimes and runtime suspension episodes, in time order |
 
-All views accept `--from-ms` and `--to-ms`. `--thread` restricts UI operations or
-raw events; it does not apply to `gc`, whose boundaries can cross threads.
+All views accept `--from-ms` and `--to-ms`. `--thread` selects the UI thread for
+`summary` and `parsing`, and restricts UI operations or raw events in other
+applicable views. It does not apply to `gc`, whose boundaries can cross threads.
 Milliseconds are relative
 to provider readiness; negative times can occur while the provider set is being
 enabled. A marker and a millisecond boundary cannot specify the same range end.
@@ -114,9 +161,15 @@ response. Use `nextOffset` with the same immutable query to retrieve the next pa
 `--limit` allows 1-100 rows; `--max-bytes` allows 4,096-1,048,576 bytes.
 `byteBudgetLimited`, row `projected`, and event `omittedFields` indicate bounded
 projections. Narrow the query or increase the budget to retrieve more detail.
+For `summary`, `activity` is fixed-size and `parsingResources` is a top-10
+preview; `parsingResourcesTotal` and `parsingResourcesOmitted` describe that
+preview independently of the detailed summary page.
 
-Usable partial results are written to stdout with a nonzero exit status and a
-structured `partial_data` error on stderr. **Do not discard stdout solely because
+Usable partial results are written to stdout with a nonzero exit status. Text
+output explains why the results may be incomplete on stderr, such as missing
+operation start/end events or a time range extending beyond the recording.
+With `--json`, stderr contains a structured `partial_data` error and the reasons
+are in stdout's `coverage.reasons`. **Do not discard stdout solely because
 the exit code is nonzero.** No usable performance evidence is an error, not a
 report that the app is fast.
 

@@ -13,8 +13,8 @@ internal sealed class PerfAnalysisManifest
 {
     public int SchemaVersion { get; set; } = 1;
     public string ToolVersion { get; set; } = VersionHelper.GetVersionString();
-    public int DecoderVersion { get; set; } = 2;
-    public int AnalyzerVersion { get; set; } = 3;
+    public int DecoderVersion { get; set; } = 1;
+    public int AnalyzerVersion { get; set; } = 1;
     public required string Fingerprint { get; set; }
     public long TargetRecords { get; set; }
     public int Events { get; set; }
@@ -62,7 +62,7 @@ internal static class PerfAnalysisStore
             CheckRegularFile(manifestPath, 262144);
             var existing = JsonSerializer.Deserialize(File.ReadAllText(manifestPath), PerfJsonContext.Default.PerfAnalysisManifest)
                 ?? throw new InvalidDataException("The analysis cache manifest is empty.");
-            if (existing.SchemaVersion == 1 && existing.DecoderVersion == 2 && existing.AnalyzerVersion == 3 &&
+            if (existing.SchemaVersion == 1 && existing.DecoderVersion == 1 && existing.AnalyzerVersion == 1 &&
                 existing.Fingerprint == fingerprint)
             {
                 foreach (var file in CacheFiles)
@@ -238,15 +238,15 @@ internal static class PerfAnalysisStore
         }
         if (capture.EventsLost != 0 || capture.BuffersLost != 0 || manifest.ReaderEventsLost != 0)
         {
-            manifest.IncompleteReasons.Add("ETW loss is nonzero or unknown.");
+            manifest.IncompleteReasons.Add("Recording events were lost, or the recorder could not confirm whether any were lost.");
         }
         if (capture.TargetExited)
         {
-            manifest.IncompleteReasons.Add("The app exited before trace finalization; its final buffered events may be missing.");
+            manifest.IncompleteReasons.Add("The app closed before recording finished, so its final events may be missing. Stop recording before closing the app.");
         }
         if (capture.Runtime is null && capture.Providers.Any(p => p.Id == PerfProviders.Xaml))
         {
-            manifest.IncompleteReasons.Add("WinUI runtime metadata was not observed; runtime provenance is incomplete.");
+            manifest.IncompleteReasons.Add("The app's WinUI runtime version could not be identified.");
         }
         manifest.CaptureReasons.AddRange(manifest.IncompleteReasons);
         if (manifest.DecodeErrors > 0)

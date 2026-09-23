@@ -30,6 +30,77 @@ public class PerfCommandTests : BaseCommandTests
     }
 
     [TestMethod]
+    [DataRow("start", "recording", null, "Capture ID: capture-id\nStop: winapp perf stop capture-id\n")]
+    [DataRow("mark", "recording", null, "Added mark scenario-start\n")]
+    [DataRow("stop", "completed", "requested", "Recording stopped.\n")]
+    [DataRow("status", "recording", null, "Capture state: recording.\n")]
+    [DataRow("status", "completed", "duration-limit", "Capture state: completed.\nStop reason: duration-limit.\n")]
+    [DataRow("status", "failed", "worker-failed", "Capture state: failed.\nStop reason: worker-failed.\n")]
+    [DataRow("stop", "failed", "worker-failed", "")]
+    [DataRow("mark", "failed", "worker-failed", "")]
+    public void CaptureConsoleOutputIsSpecificToTheOperation(string operation, string state,
+        string? reason, string expected)
+    {
+        var capture = new PerfCaptureDocument
+        {
+            Id = "capture-id", Directory = @"C:\capture", SessionName = "test",
+            State = state, StopReason = reason,
+        };
+
+        PerfCommand.PrintCapture(capture, false, TestAnsiConsole, operation, "scenario-start");
+
+        Assert.AreEqual(expected, TestAnsiConsole.Output.Replace("\r\n", "\n"));
+    }
+
+    [TestMethod]
+    public void ConciseCaptureOutputPreservesWarnings()
+    {
+        var capture = new PerfCaptureDocument
+        {
+            Id = "capture-id", Directory = @"C:\capture", SessionName = "test", State = "completed",
+            Warnings = ["Final loss counters unavailable."],
+            ProviderStates = [new(PerfProviders.Clr, "unavailable", null, "Denied.")],
+        };
+
+        PerfCommand.PrintCapture(capture, false, TestAnsiConsole, "stop");
+
+        StringAssert.Contains(TestAnsiConsole.Output, "Recording stopped.");
+        StringAssert.Contains(TestAnsiConsole.Output, "Final loss counters unavailable.");
+        StringAssert.Contains(TestAnsiConsole.Output, "Denied.");
+        Assert.IsFalse(TestAnsiConsole.Output.Contains(capture.Id, StringComparison.Ordinal));
+        Assert.IsFalse(TestAnsiConsole.Output.Contains(capture.Directory, StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    [DataRow("start")]
+    [DataRow("mark")]
+    [DataRow("stop")]
+    [DataRow("status")]
+    public void CaptureJsonStillReturnsTheFullDocument(string operation)
+    {
+        var capture = new PerfCaptureDocument
+        {
+            Id = "capture-id", Directory = @"C:\capture", SessionName = "test", State = "recording",
+            Markers = [new("scenario-start", 42)],
+        };
+        var previous = Console.Out;
+        using var stdout = new StringWriter();
+        try
+        {
+            Console.SetOut(stdout);
+            PerfCommand.PrintCapture(capture, true, TestAnsiConsole, operation, "scenario-start");
+        }
+        finally
+        {
+            Console.SetOut(previous);
+        }
+
+        Assert.AreEqual(JsonSerializer.Serialize(capture, PerfJsonContext.Default.PerfCaptureDocument),
+            stdout.ToString().TrimEnd());
+        Assert.AreEqual("", TestAnsiConsole.Output);
+    }
+
+    [TestMethod]
     [DataRow("perf start --app --output unused --json")]
     [DataRow("perf start --app 1 --output unused --json=not-bool")]
     [DataRow("perf start --output unused --json")]
@@ -100,6 +171,228 @@ public class PerfCommandTests : BaseCommandTests
         Assert.IsEmpty(hotspots.Errors);
         Assert.AreEqual("hotspots", hotspots.GetValue(view));
         Assert.AreEqual(8.5, hotspots.GetValue(minimum));
+
+        var parsing = command.Parse(["capture", "--view", "parsing"]);
+        Assert.IsEmpty(parsing.Errors);
+        Assert.AreEqual("parsing", parsing.GetValue(view));
+    }
+
+    [TestMethod]
+    public async Task DefaultConsoleReportShowsActivityParsingThenDetailedSummary()
+    {
+        var parserEvent = new PerfEvent("parse-begin", 10, 10, 7, PerfProviders.Xaml, 1, 0, 1,
+            Guid.Empty, "ParseXaml", "parsing", "begin", null,
+            new() { ["URI"] = "Views/[MainPage].xaml" });
+        var directory = CreateCachedAnalysis(
+            [
+                new("frame", "Frame", "frames", 7, null, null, "f1", "f2", 0, 40, 40, null, "complete", 20),
+                new("parse", "ParseXaml", "parsing", 7, null, "frame", "parse-begin", "parse-end", 10, 20, 10, null, "complete", 10),
+            ],
+            events: [parserEvent]);
+        try
+        {
+            var exitCode = await ParseAndInvokeWithCaptureAsync(GetRequiredService<PerfCommand>(),
+                ["analyze", directory.FullName]);
+            var output = TestAnsiConsole.Output;
+
+            Assert.AreEqual(0, exitCode);
+            var activity = output.IndexOf("Observed UI-thread activity", StringComparison.Ordinal);
+            var parsing = output.IndexOf("Parsing by resource", StringComparison.Ordinal);
+            var details = output.IndexOf("Detailed summary", StringComparison.Ordinal);
+            Assert.IsTrue(activity >= 0 && parsing > activity && details > parsing);
+            StringAssert.Contains(output, "Views/[MainPage].xaml");
+            StringAssert.Contains(output, "primary UI thread 7");
+            var sectionLines = output.Split('\n').Where(line =>
+                line.Contains("Observed UI-thread activity", StringComparison.Ordinal) ||
+                line.Contains("Parsing by resource", StringComparison.Ordinal) ||
+                line.Contains("Detailed summary", StringComparison.Ordinal)).ToArray();
+            Assert.HasCount(3, sectionLines);
+            Assert.IsTrue(sectionLines.All(line => line.Contains('─') || line.Contains("---", StringComparison.Ordinal)));
+            Assert.IsFalse(output.Contains('\u001b'), "Plain-text consoles must not contain ANSI escapes.");
+            foreach (var hiddenDetail in new[] { "evidence:", "count=", "mean=", "max=", "p95=", "GC coverage:", "Coverage:", "next offset:" })
+            {
+                Assert.IsFalse(output.Contains(hiddenDetail, StringComparison.Ordinal), hiddenDetail);
+            }
+            Assert.IsTrue(output.TrimEnd().EndsWith("Returned 2/2", StringComparison.Ordinal));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SummaryOmitsEmptyParsingSection()
+    {
+        var directory = CreateCachedAnalysis(
+            [new("c1", "Layout", "layout", 1, null, null, "v1", "v2",
+                0, 10, 10, null, "complete", 10)]);
+        try
+        {
+            var exit = await ParseAndInvokeWithCaptureAsync(GetRequiredService<PerfCommand>(),
+                ["analyze", directory.FullName]);
+
+            Assert.AreEqual(0, exit);
+            StringAssert.Contains(TestAnsiConsole.Output, "Observed UI-thread activity");
+            StringAssert.Contains(TestAnsiConsole.Output, "Detailed summary");
+            Assert.IsFalse(TestAnsiConsole.Output.Contains("Parsing by resource", StringComparison.Ordinal));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SummaryNextPageCommandPreservesQueryAndReplacesOffset()
+    {
+        TestAnsiConsole.Profile.Width = 4096;
+        var directory = CreateCachedAnalysis(Enumerable.Range(0, 25).Select(index =>
+            new PerfCall("c" + index, "Operation" + index, "layout", 7, null, null,
+                "v" + index, null, 0, 10, 10, null, "complete", 10)));
+        try
+        {
+            var command = GetRequiredService<PerfCommand>();
+            var exit = await ParseAndInvokeWithCaptureAsync(command,
+                ["analyze", directory.FullName, "--view", "summary", "--thread", "7",
+                    "--from-ms", "0", "--to-ms", "20", "--sort", "count", "--limit", "10", "--offset", "10"]);
+            Assert.AreEqual(0, exit);
+            var output = TestAnsiConsole.Output;
+            StringAssert.Contains(output, "Returned 10/25");
+            var next = output[output.IndexOf("Next page: winapp ", StringComparison.Ordinal)..]
+                .Replace("Next page: winapp ", "", StringComparison.Ordinal).Replace("\r", "").Replace("\n", "");
+            var parse = command.Parse(next["perf ".Length..]);
+            Assert.IsEmpty(parse.Errors);
+            Assert.AreEqual("summary", parse.GetValue(command.Subcommands.Single(c => c.Name == "analyze")
+                .Options.OfType<Option<string>>().Single(o => o.Name == "--view")));
+            var analyze = command.Subcommands.Single(c => c.Name == "analyze");
+            Assert.AreEqual(20, parse.GetValue(analyze.Options.OfType<Option<int>>().Single(o => o.Name == "--offset")));
+            Assert.AreEqual(10, parse.GetValue(analyze.Options.OfType<Option<int>>().Single(o => o.Name == "--limit")));
+            Assert.AreEqual(7u, parse.GetValue(analyze.Options.OfType<Option<uint?>>().Single(o => o.Name == "--thread")));
+            Assert.AreEqual(20d, parse.GetValue(analyze.Options.OfType<Option<double?>>().Single(o => o.Name == "--to-ms")));
+            Assert.AreEqual(0, await parse.InvokeAsync());
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    [DataRow("summary", false)]
+    [DataRow("calls", false)]
+    [DataRow("summary", true)]
+    public async Task PartialAnalysisExplainsReasonsWithoutDiscardingResults(string view, bool json)
+    {
+        var directory = CreateCachedAnalysis(
+            [
+                new("c1", "Layout", "layout", 1, null, null, "v1", "v2",
+                    0, 10, 10, null, "complete", 10),
+                new("c2", "Measure", "layout", 1, null, null, "v3", null,
+                    20, null, null, null, "missing-end"),
+            ]);
+        var previous = Console.Error;
+        using var stderr = new StringWriter();
+        try
+        {
+            string[] args = ["analyze", directory.FullName, "--view", view, "--to-ms", "50"];
+            string error;
+            if (json)
+            {
+                var (stdout, jsonError, exit) = await InvokeProgramAsync(["perf", .. args, "--json"]);
+                Assert.AreEqual(1, exit);
+                using var result = JsonDocument.Parse(stdout);
+                Assert.IsTrue(result.RootElement.GetProperty("rows").GetArrayLength() > 0);
+                Assert.AreEqual(2, result.RootElement.GetProperty("coverage").GetProperty("reasons").GetArrayLength());
+                using var envelope = JsonDocument.Parse(jsonError);
+                Assert.AreEqual("partial_data", envelope.RootElement.GetProperty("code").GetString());
+                Assert.IsTrue(envelope.RootElement.GetProperty("partialOutput").GetBoolean());
+            }
+            else
+            {
+                Console.SetError(stderr);
+                var exit = await ParseAndInvokeWithCaptureAsync(GetRequiredService<PerfCommand>(), args);
+                Assert.AreEqual(1, exit);
+                StringAssert.Contains(TestAnsiConsole.Output, "Returned");
+                error = stderr.ToString();
+                StringAssert.Contains(error, "Results may be incomplete:");
+                StringAssert.Contains(error, "- The selected time range extends beyond the recording.");
+                StringAssert.Contains(error, "- Some UI operations have missing or inconsistent start/end events");
+                Assert.IsFalse(error.Contains("coverage.reasons", StringComparison.Ordinal));
+                Assert.IsFalse(error.Contains("manifests", StringComparison.Ordinal));
+                Assert.IsFalse(TestAnsiConsole.Output.Contains("Coverage:", StringComparison.Ordinal));
+            }
+        }
+        finally
+        {
+            Console.SetError(previous);
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    [DataRow("summary")]
+    [DataRow("calls")]
+    [DataRow("call")]
+    public async Task AnalysisOmitsTextLimitationsButRetainsThemInJson(string view)
+    {
+        TestAnsiConsole.Profile.Width = 4096;
+        var directory = CreateCachedAnalysis(
+            [new("c1", "Layout", "layout", 1, null, null, "v1", "v2",
+                0, 10, 10, null, "complete", 10)]);
+        try
+        {
+            string[] args = ["analyze", directory.FullName, "--view", view];
+            if (view == "call")
+            {
+                args = [.. args, "--id", "c1"];
+            }
+            var exit = await ParseAndInvokeWithCaptureAsync(GetRequiredService<PerfCommand>(), args);
+            Assert.AreEqual(0, exit);
+            var output = TestAnsiConsole.Output;
+            StringAssert.Contains(output, "Returned");
+
+            var (stdout, stderr, code) = await InvokeProgramAsync(["perf", .. args, "--json"]);
+            Assert.AreEqual(0, code, stderr);
+            using var json = JsonDocument.Parse(stdout);
+            var limitations = json.RootElement.GetProperty("limitations");
+            Assert.AreEqual(8, limitations.GetArrayLength());
+            foreach (var limitation in limitations.EnumerateArray())
+            {
+                Assert.IsFalse(output.Contains(limitation.GetString()!, StringComparison.Ordinal));
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SummaryJsonRetainsEvidenceAndStatistics()
+    {
+        var directory = CreateCachedAnalysis(
+            [new("c1", "Layout", "layout", 1, null, null, "v1", "v2",
+                0, 10, 10, null, "complete", 10)]);
+        try
+        {
+            var (stdout, stderr, code) = await InvokeProgramAsync(
+                ["perf", "analyze", directory.FullName, "--json"]);
+
+            Assert.AreEqual(0, code, stderr);
+            using var json = JsonDocument.Parse(stdout);
+            var row = json.RootElement.GetProperty("rows").EnumerateArray()
+                .Single(row => row.GetProperty("id").GetString() == "phase:Layout");
+            Assert.AreEqual("v1", row.GetProperty("evidence")[0].GetString());
+            Assert.AreEqual(1, row.GetProperty("count").GetInt32());
+            Assert.AreEqual(10d, row.GetProperty("meanMs").GetDouble());
+            Assert.AreEqual(10d, row.GetProperty("maxMs").GetDouble());
+            Assert.AreEqual(10d, row.GetProperty("p95Ms").GetDouble());
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     [TestMethod]
@@ -201,7 +494,9 @@ public class PerfCommandTests : BaseCommandTests
     }
 
     [TestMethod]
-    public async Task ConsoleRendererIncludesBoundaryOverlapTotals()
+    [DataRow("elements")]
+    [DataRow("summary")]
+    public async Task ConsoleRendererIncludesBoundaryOverlapTotals(string view)
     {
         var directory = CreateCachedAnalysis(
             [new("c1", "MeasureElement", "layout", 1, "e1", null, "v1", "v2",
@@ -210,11 +505,18 @@ public class PerfCommandTests : BaseCommandTests
         try
         {
             var exitCode = await ParseAndInvokeWithCaptureAsync(GetRequiredService<PerfCommand>(),
-                ["analyze", directory.FullName, "--view", "elements", "--from-ms", "5", "--to-ms", "35"]);
+                ["analyze", directory.FullName, "--view", view, "--from-ms", "5", "--to-ms", "35"]);
 
             Assert.AreEqual(0, exitCode);
             StringAssert.Contains(TestAnsiConsole.Output, "boundary");
             StringAssert.Contains(TestAnsiConsole.Output, "30.000");
+            if (view == "elements")
+            {
+                foreach (var detail in new[] { "evidence:", "count=", "mean=", "max=", "p95=" })
+                {
+                    StringAssert.Contains(TestAnsiConsole.Output, detail);
+                }
+            }
         }
         finally
         {
@@ -245,14 +547,16 @@ public class PerfCommandTests : BaseCommandTests
     }
 
     [TestMethod]
-    public async Task PerformanceSkillBoundsInitialQueriesWithScenarioMarkers()
+    public async Task PerformanceSkillStartsWithMarkerBoundedSummary()
     {
         var source = await ReadRepositoryFileAsync(
             "plugins", "winapp", "skills", "winapp-performance", "SKILL.md");
-        var initialQuery = source.Split('\n').Single(line => line.Contains("winapp perf analyze <directory> --view hotspots"));
+        var initialQuery = source.Split('\n').Single(line =>
+            line.Contains("winapp perf analyze <directory> --from-marker scenario-start"));
 
         StringAssert.Contains(initialQuery, "--from-marker");
         StringAssert.Contains(initialQuery, "--to-marker");
+        Assert.IsFalse(initialQuery.Contains("--view", StringComparison.Ordinal));
     }
 
     private static async Task<string> ReadRepositoryFileAsync(params string[] path)

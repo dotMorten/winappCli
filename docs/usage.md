@@ -2131,8 +2131,11 @@ winapp perf analyze .\traces\scenario --json
 ```
 
 Record and query WinUI 3 layout, frame, input and scrolling evidence. Stop the
-capture before analysis. See the [performance guide](guides/winui-performance.md)
-for the complete start/mark/stop/query workflow and interpretation limits.
+capture before analysis. The default analysis reports mutually exclusive observed
+activity on the primary UI thread, the hottest parsed XAML resources, and a
+detailed operation ranking. Use marker or millisecond bounds for before/after
+comparisons. See the [performance guide](guides/winui-performance.md) for the
+complete start/mark/stop/query workflow and interpretation limits.
 
 ### ui
 

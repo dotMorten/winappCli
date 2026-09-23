@@ -31,10 +31,14 @@ internal static class WinUiEventDecoder
     {
         var result = new Dictionary<ushort, Schema>
         {
+            [1] = new("ParseXaml", "parsing", 1, "s:URI"),
+            [2] = new("ParseXaml", "parsing", 2, "s:URI"),
             [5] = new("ApplyTemplate", "layout", 1, "p:ElementId s:ClassName"),
             [6] = new("ApplyTemplate", "layout", 2, ""),
             [15] = new("EventCallback", "input", 1, "s:CallbackName"),
             [16] = new("EventCallback", "input", 2, ""),
+            [20] = new("ApplicationLoadComponent", "parsing", 1, "s:ComponentName"),
+            [21] = new("ApplicationLoadComponent", "parsing", 2, ""),
             [26] = new("Tick", "frames", 0, "u:IsHighPriority"),
             [47] = new("MeasureElement", "layout", 1, "p:ElementId f:Width f:Height"),
             [48] = new("MeasureElement", "layout", 2, "p:ElementId f:DesiredWidth f:DesiredHeight"),
@@ -43,6 +47,14 @@ internal static class WinUiEventDecoder
             [61] = new("Created", "metadata", 0, "p:ElementId"),
             [62] = new("Destroyed", "metadata", 0, "p:ElementId"),
             [101] = new("SubmitFrameInfo", "frames", 0, "p:FrameId"),
+            [103] = new("DownloadRequest", "images", 1, ""),
+            [104] = new("DownloadRequest", "images", 2, ""),
+            [143] = new("ImageCacheDownload", "images", 1, "s:URI"),
+            [144] = new("ImageCacheDownload", "images", 2, "s:URI"),
+            [145] = new("ImageCacheDecode", "images", 1, "s:URI"),
+            [146] = new("ImageCacheDecode", "images", 2, "s:URI"),
+            [147] = new("DecodeToSurface", "images", 1, ""),
+            [148] = new("DecodeToSurface", "images", 2, ""),
             [165] = new("ProcessPointerInput", "input", 1, "u:PointerId u:MsgId f:X f:Y"),
             [166] = new("ProcessPointerInput", "input", 2, ""),
             [213] = new("Name", "metadata", 0, "p:ElementId s:Name"),
@@ -52,8 +64,18 @@ internal static class WinUiEventDecoder
             [353] = new("VirtualizedItemAdded", "virtualization", 0, "p:ElementId p:ScrollViewerId i:ItemIndex b:IsPlaceholder"),
             [354] = new("VirtualizedItemUpdated", "virtualization", 0, "p:ElementId u:Phase"),
             [355] = new("VirtualizedItemRemoved", "virtualization", 0, "p:ElementId"),
+            [360] = new("DecodeToRenderSize", "images", 1, "p:ImageId s:URI"),
+            [361] = new("DecodeToRenderSize", "images", 2, "p:ImageId s:URI"),
+            [364] = new("ImageEnsureAndUpdateHardwareResources", "images", 1, "p:ImageId s:URI"),
+            [365] = new("ImageEnsureAndUpdateHardwareResources", "images", 2, "p:ImageId s:URI"),
+            [366] = new("ImageCopyToVideoMemory", "images", 1, "p:Id"),
+            [367] = new("ImageCopyToVideoMemory", "images", 2, "p:Id"),
             [377] = new("VirtualizationEnabledByModernPanel", "virtualization", 0, "b:IsEnabled"),
             [378] = new("VirtualizationEnabledByLayout", "virtualization", 0, "b:IsEnabled"),
+            [401] = new("ImageUpdateHardwareResources", "images", 1, "p:Id"),
+            [402] = new("ImageUpdateHardwareResources", "images", 2, "p:Id"),
+            [483] = new("DownloadRequestBinding", "images", 1, "p:Id"),
+            [484] = new("DownloadRequestBinding", "images", 2, "p:Id u:HR"),
         };
         Pair(result, 41, 42, "Layout", "layout");
         Pair(result, 43, 44, "Measure", "layout");
@@ -124,6 +146,7 @@ internal static class WinUiEventDecoder
                 shape = (raw.Provider == PerfProviders.Xaml, raw.EventId) switch
                 {
                     (true, 94) => "i:Visited i:Rendered",
+                    (true, 360) => "p:ImageId u:RenderWidth u:RenderHeight u:PreviousDecodeWidth u:PreviousDecodeHeight u:DecodeWidth u:DecodeHeight u:NativeWidth u:NativeHeight u:LayoutWidth u:LayoutHeight",
                     (true, 377 or 378) => "b:IsEnabled p:ElementId s:Name s:ClassType s:PropertyType",
                     (false, 83) => "p:ElementId s:ClassName s:FileURI u:LineNumber u:ColumnNumber s:FileHash",
                     _ => throw new InvalidDataException("Unsupported manifest descriptor version."),
@@ -156,6 +179,21 @@ internal static class WinUiEventDecoder
     private static PerfEvent? DecodeSelfDescribing(PerfRawEvent raw, string id, long origin, long frequency)
     {
         var name = raw.EventName ?? $"TraceLogging:{raw.EventId}";
+        var imageScope = name switch
+        {
+            "ParseImageMetadataStart" => ("ParseImageMetadata", "begin"),
+            "ParseImageMetadataStop" => ("ParseImageMetadata", "end"),
+            "DecodeToRenderSizeStart" => ("DecodeToRenderSize", "begin"),
+            "DecodeToRenderSizeStop" => ("DecodeToRenderSize", "end"),
+            "OffThreadDecodeStart" => ("OffThreadDecode", "begin"),
+            "OffThreadDecodeStop" => ("OffThreadDecode", "end"),
+            _ => default,
+        };
+        var isImageEvent = imageScope != default || name is
+            "SetUriSource" or "SetStreamSource" or "QueueProcessDownload" or "WaitForDownloadInProgress" or
+            "FoundCompletedDownload" or "ImageDownloadCompleteNotification" or "RequestDecodeToRenderSize" or
+            "QueueProcessDecodeRequests" or "ProcessDecodeRequests" or "QueueDecodeFromImageCache" or
+            "QueueOffThreadDecode" or "DecodeResultAvailable";
         var family = raw.Provider == PerfProviders.Controls ? "virtualization" :
             name.StartsWith("FlowLayout", StringComparison.Ordinal) || name.StartsWith("Items", StringComparison.Ordinal) ? "virtualization" :
             name.StartsWith("Scroll", StringComparison.Ordinal) ? "scrolling" :
@@ -163,6 +201,8 @@ internal static class WinUiEventDecoder
             name.StartsWith("Scheduling_", StringComparison.Ordinal) || name.StartsWith("Dispatch_", StringComparison.Ordinal) ||
                 name is "CoreServices_Frame" or "FirstUiThreadFrameEnd" || name.StartsWith("RenderWalk_", StringComparison.Ordinal) ? "frames" :
             name == "FrameworkElement_ApplyTemplate" ? "layout" :
+            name == "Application_LoadComponent" ? "parsing" :
+            isImageEvent ? "images" :
             name is "PublicApiCall" or "PerfXamlEvent" ? "framework" :
             raw.DecodeError is not null ? "unknown" : null;
         if (family is null)
@@ -170,11 +210,11 @@ internal static class WinUiEventDecoder
             return null;
         }
         var fields = raw.Fields is null ? new Dictionary<string, string>() : new(raw.Fields, StringComparer.Ordinal);
-        var phase = "info";
+        var phase = imageScope == default ? "info" : imageScope.Item2;
         var error = raw.DecodeError;
         string? objectId = fields.GetValueOrDefault("ObjectPointer");
         // These contracts describe synchronous invocation scopes, not completion of returned async operations.
-        if (name is "PublicApiCall" or "PerfXamlEvent")
+        if (name is "PublicApiCall" or "PerfXamlEvent" or "Application_LoadComponent")
         {
             var flag = fields.GetValueOrDefault("IsStart");
             if (string.Equals(flag, "true", StringComparison.OrdinalIgnoreCase) || flag == "1")
@@ -189,7 +229,14 @@ internal static class WinUiEventDecoder
             {
                 error ??= "The synchronous scope IsStart field is invalid, missing or ambiguous.";
             }
-            if (fields.TryGetValue(name == "PublicApiCall" ? "MethodName" : "EventName", out var operation))
+            if (name == "Application_LoadComponent")
+            {
+                if (!fields.ContainsKey("Uri"))
+                {
+                    error ??= "The XAML resource URI is missing.";
+                }
+            }
+            else if (fields.TryGetValue(name == "PublicApiCall" ? "MethodName" : "EventName", out var operation))
             {
                 name += ":" + operation;
                 if (operation == "WXM::InitializeForCurrentThread")
@@ -201,6 +248,10 @@ internal static class WinUiEventDecoder
             {
                 error ??= "The synchronous scope operation name is missing or ambiguous.";
             }
+        }
+        if (imageScope != default)
+        {
+            name = imageScope.Item1;
         }
         if (objectId is not null)
         {

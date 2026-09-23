@@ -17,9 +17,14 @@ description: Investigate slow WinUI 3 layout, scrolling and virtualization using
    drive a short repeatable scenario with verified UI selectors, wait for its
    visible outcome, then run `winapp perf mark <id> --name scenario-end --json`.
 5. Run `winapp perf stop <id> --json` before closing the app.
-6. Start frame triage with
-   `winapp perf analyze <directory> --view hotspots --from-marker scenario-start --to-marker scenario-end --json`; its default threshold
-   is 16.67 ms and each row includes dominant direct child operations. Expand a
+6. Start with
+   `winapp perf analyze <directory> --from-marker scenario-start --to-marker scenario-end --json`
+   to compare mutually exclusive primary-UI-thread activity, the hottest parsed
+   XAML resources, and the detailed operation ranking. Use `--view parsing` over
+   the same range when the parsing preview needs full paging. Then query
+   `winapp perf analyze <directory> --view hotspots --from-marker scenario-start
+   --to-marker scenario-end --json`; its default threshold is 16.67 ms and each
+   row includes dominant direct child operations. Expand a
    returned operation with `--view call --id <call-id> --depth 2 --from-marker
    scenario-start --to-marker scenario-end --json`. Use `--view calls --family
    layout` with the same marker range when the hotspot evidence points to layout.
@@ -36,6 +41,8 @@ description: Investigate slow WinUI 3 layout, scrolling and virtualization using
 - Readiness is not decoded coverage. Missing events are inconclusive.
 - Use elapsed-time terminology; do not claim CPU/GPU attribution, displayed FPS,
   proven input-to-display latency, or complete startup/visual-tree coverage.
+- `Unclassified` includes idle, waits, and uninstrumented work. Do not describe it
+  as app code or CPU use. Off-thread image decode is not UI-thread occupancy.
 - Trace-local element IDs are not UI Automation selectors.
 - Call trees are instrumented operation scopes, not CPU stacks or visual trees.
   Keep exclusive scope time distinct from element self time.

@@ -115,7 +115,7 @@ internal static class PerfProviders
 
     public static readonly PerfProvider[] All =
     [
-        new(Xaml, "Microsoft-Windows-XAML", "fffffffffff094c5", 5),
+        new(Xaml, "Microsoft-Windows-XAML", "fffffffffff295d5", 5),
         new(Operational, "Microsoft.UI.Xaml", "ffffffffffffffff", 5),
         new(Controls, "Microsoft.UI.Xaml.Controls.Perf", "ffffffffffffffff", 4),
         new(Diagnostics, "Microsoft-Windows-XAML-Diagnostics", "ffffffffffffffff", 5,
