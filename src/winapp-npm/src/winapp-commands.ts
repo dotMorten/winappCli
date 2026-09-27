@@ -152,7 +152,7 @@ export interface CertGenerateOptions extends CommonOptions {
   manifest?: string;
   /** Output path for the generated PFX file */
   output?: string;
-  /** Password for the generated PFX file */
+  /** Password for the generated PFX file. Defaults to 'password', which is publicly known — a certificate left with that password is development-only, because anyone who obtains the .pfx can sign as you. */
   password?: string;
   /** Publisher distinguished name (DN) for the generated certificate (e.g., CN=MyCompany or OU=Team, O=Corp, C=US). If not specified, will be inferred from manifest. Bare names are auto-wrapped as CN=<name>. */
   publisher?: string;
@@ -1501,7 +1501,7 @@ export async function uiDrag(options: UiDragOptions = {}): Promise<WinappResult>
 
 export interface UiFocusOptions extends CommonOptions {
   /** Semantic slug (e.g., btn-minimize-d1a0) or text to search by name/automationId */
-  selector?: string;
+  selector: string;
   /** Run this command on the named execution target instead of this machine. Supported: 'sandbox' (the Windows Sandbox winapp manages) and 'local' (the default). There is no fallback: if the target cannot be prepared, the command fails rather than running here. */
   on?: string;
   /** Target app (process name, window title, or PID). Lists windows if ambiguous. */
@@ -1513,12 +1513,12 @@ export interface UiFocusOptions extends CommonOptions {
 }
 
 /**
- * Move keyboard focus to the specified element using UIA SetFocus.
+ * Activate the specified element's window, focus the element, and verify foreground and keyboard focus. Fails if Windows refuses activation or focus cannot be confirmed.
  */
-export async function uiFocus(options: UiFocusOptions = {}): Promise<WinappResult> {
+export async function uiFocus(options: UiFocusOptions): Promise<WinappResult> {
   const args: string[] = ['ui', 'focus'];
   const positionals: string[] = [];
-  if (options.selector) positionals.push(options.selector);
+  positionals.push(options.selector);
   if (options.on !== undefined) args.push('--on', options.on);
   if (options.app !== undefined) args.push('--app', options.app);
   if (options.json) args.push('--json');
@@ -1543,7 +1543,7 @@ export interface UiGetFocusedOptions extends CommonOptions {
 }
 
 /**
- * Show the element that currently has keyboard focus in the target app.
+ * Show the element that currently has keyboard focus in the target app. With -w, focus must belong to that exact top-level window; owned popups are excluded.
  */
 export async function uiGetFocused(options: UiGetFocusedOptions = {}): Promise<WinappResult> {
   const args: string[] = ['ui', 'get-focused'];
@@ -1894,7 +1894,7 @@ export interface UiScreenshotOptions extends CommonOptions {
 }
 
 /**
- * Capture the target window or element as a PNG image. When multiple windows exist (e.g., dialogs), captures each to a separate file. With --json, returns file path and dimensions. Use --capture-screen for popup overlays.
+ * Capture the target window or element as a PNG image. Without an element selector, combines multiple windows into one labeled composite: --app by process name or PID includes the app's windows and their owned windows; a title match or --window selects one window plus its owned windows. With --json, returns file path and dimensions. Use --capture-screen with --window to capture one screen region, including visible overlays in place.
  */
 export async function uiScreenshot(options: UiScreenshotOptions = {}): Promise<WinappResult> {
   const args: string[] = ['ui', 'screenshot'];
