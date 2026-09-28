@@ -71,6 +71,41 @@ still match. Unknown loss remains unknown after recovery.
 The output directory must be empty. Keep it until you no longer need the evidence,
 and move captures only after stopping them.
 
+## Recording startup layout
+
+If recording misses initial loading, temporarily add a delay as the first
+statement in your C# app's `Main`, before the existing WinUI initialization:
+
+```csharp
+System.Threading.Thread.Sleep(TimeSpan.FromSeconds(10));
+```
+
+Keep the remaining startup code unchanged. Placing the delay before
+`Application.Start` pauses before the `App` instance or any app window is created.
+Putting it in the `App` constructor instead misses earlier initialization.
+
+If the project uses a generated `Main`, copy its entry-point class from
+`App.g.i.cs` under `obj` into a temporary source file, add the delay, and disable
+the generated entry point in the project file:
+
+```xml
+<PropertyGroup>
+  <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+</PropertyGroup>
+```
+
+Do not edit the generated file itself. Ask permission before modifying someone
+else's app, and undo the change after a recording.
+
+The delay gives the recorder time to attach; it does not guarantee readiness.
+If recording is not ready before startup resumes, increase the delay and retry
+with an empty capture directory. If delaying startup prevents activation or
+attachment, remove the delay rather than treating the capture as successful.
+This recipe has been verified with an unpackaged app, not packaged activation.
+
+Remove the delay and any temporary entry-point file and project constant when
+finished, preserving unrelated edits.
+
 ## Analyze the recording
 
 ```powershell
