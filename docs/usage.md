@@ -2158,7 +2158,7 @@ as a credential, and is only ever persisted as a SHA-256 hash. See
 
 ```powershell
 $capture = winapp perf start --app 1234 --output .\traces\scenario --json | ConvertFrom-Json
-winapp perf stop $capture.captureId
+winapp perf stop $capture.id
 winapp perf analyze .\traces\scenario --json
 ```
 
