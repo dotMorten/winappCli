@@ -37,8 +37,6 @@ internal static class WinUiEventDecoder
             [6] = new("ApplyTemplate", "layout", 2, ""),
             [15] = new("EventCallback", "input", 1, "s:CallbackName"),
             [16] = new("EventCallback", "input", 2, ""),
-            [20] = new("ApplicationLoadComponent", "parsing", 1, "s:ComponentName"),
-            [21] = new("ApplicationLoadComponent", "parsing", 2, ""),
             [26] = new("Tick", "frames", 0, "u:IsHighPriority"),
             [47] = new("MeasureElement", "layout", 1, "p:ElementId f:Width f:Height"),
             [48] = new("MeasureElement", "layout", 2, "p:ElementId f:DesiredWidth f:DesiredHeight"),
@@ -51,7 +49,6 @@ internal static class WinUiEventDecoder
             [104] = new("DownloadRequest", "images", 2, ""),
             [143] = new("ImageCacheDownload", "images", 1, "s:URI"),
             [144] = new("ImageCacheDownload", "images", 2, "s:URI"),
-            [145] = new("ImageCacheDecode", "images", 1, "s:URI"),
             [146] = new("ImageCacheDecode", "images", 2, "s:URI"),
             [147] = new("DecodeToSurface", "images", 1, ""),
             [148] = new("DecodeToSurface", "images", 2, ""),
@@ -172,8 +169,11 @@ internal static class WinUiEventDecoder
             fields.Clear();
             error = ex.Message;
         }
+        // WinUI emits ImageCacheDecode's completion but never its start.
+        var phase = schema.Name == "ImageCacheDecode" ? "info" : Phase(raw.Opcode);
         return Create(raw, id, origin, frequency, schema.Name, schema.Family,
-            error is null ? Phase(raw.Opcode) : "unknown", fields.GetValueOrDefault("ElementId"), fields, error);
+            error is null ? phase : "unknown",
+            fields.GetValueOrDefault("ElementId"), fields, error);
     }
 
     private static PerfEvent? DecodeSelfDescribing(PerfRawEvent raw, string id, long origin, long frequency)

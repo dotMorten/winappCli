@@ -157,7 +157,7 @@ public class PerfCallQueryTests
         {
             Call("load", 0, 10) with
             {
-                Name = "ApplicationLoadComponent", Family = "parsing", BeginEvent = "load-begin",
+                Name = "Application_LoadComponent", Family = "parsing", BeginEvent = "load-begin",
             },
             Call("parse", 2, 8, "load") with
             {
@@ -166,10 +166,10 @@ public class PerfCallQueryTests
         };
         var events = new[]
         {
-            PerfGcTests.Event("ApplicationLoadComponent", 0) with
+            PerfGcTests.Event("Application_LoadComponent", 0) with
             {
                 Id = "load-begin", Provider = PerfProviders.Xaml, Family = "parsing", Phase = "begin",
-                Fields = new() { ["ComponentName"] = "Views/MainPage.xaml" },
+                Fields = new() { ["Uri"] = "Views/MainPage.xaml" },
             },
             PerfGcTests.Event("ParseXaml", 2) with
             {
@@ -184,6 +184,59 @@ public class PerfCallQueryTests
         AssertActivity(result, "Parsing", 10);
         Assert.AreEqual(10d, result.ParsingResources!.Single().ObservedMs);
         Assert.AreEqual(2, result.ParsingResources!.Single().Count);
+    }
+
+    [TestMethod]
+    public void InterleavedComponentLoadsUseOnlyTheModernPairAndRemainQueryable()
+    {
+        const string resource = "Views/MainPage.xaml";
+        static PerfEvent? Decode(ushort descriptor, byte opcode, double time, byte[] payload, string id) =>
+            WinUiEventDecoder.Decode(new PerfRawEvent((long)(time * 100), 1, 1, PerfProviders.Xaml,
+                descriptor, 0, opcode, Guid.Empty, 8, false, payload, null, null, null),
+                id, 0, 100000);
+        static PerfEvent Modern(bool begin, double time) =>
+            WinUiEventDecoder.Decode(new PerfRawEvent((long)(time * 100), 1, 1, PerfProviders.Xaml,
+                0, 0, 0, Guid.Empty, 8, true, [], "Application_LoadComponent",
+                begin ? new() { ["IsStart"] = "true", ["Uri"] = resource, ["FrameNumber"] = "42" } :
+                    new() { ["IsStart"] = "false", ["Uri"] = resource }, null),
+                begin ? "modern-begin" : "modern-end", 0, 100000)!;
+        var events = new[]
+        {
+            Decode(20, 1, 400.57, Encoding.Unicode.GetBytes(resource + "\0"), "legacy-begin"),
+            Modern(true, 400.57),
+            Decode(21, 2, 581.72, [], "legacy-end"),
+            Modern(false, 581.72),
+            Decode(146, 2, 581.73, Encoding.Unicode.GetBytes("Assets/Image.png\0"), "image-end"),
+        }.OfType<PerfEvent>().ToArray();
+        var calls = new List<PerfCall>();
+        var analyzer = new PerfAnalyzer(calls.Add);
+        foreach (var e in events)
+        {
+            analyzer.Accept(e);
+        }
+        analyzer.Complete();
+        using var fixture = new Fixture(calls.ToArray(), events);
+        fixture.Capture.StopQpc = 582;
+        fixture.Manifest.LastEventMs = 581.73;
+        fixture.Manifest.IncompleteCalls = analyzer.IncompleteCalls;
+
+        var summary = fixture.Query(new(View: "summary", FromMs: 400.57, ToMs: 581.73));
+        Assert.AreEqual(0, analyzer.IncompleteCalls);
+        Assert.AreEqual(3, events.Length);
+        Assert.AreEqual("42", events[0].Fields["FrameNumber"]);
+        Assert.AreEqual(1, calls.Count);
+        Assert.AreEqual("Application_LoadComponent", calls.Single().Name);
+        Assert.IsTrue(summary.Coverage.Complete);
+        AssertActivity(summary, "Parsing", 181.15);
+        Assert.AreEqual(resource, summary.ParsingResources!.Single().Resource);
+        Assert.AreEqual(181.15, summary.ParsingResources!.Single().ObservedMs, 0.000001);
+        foreach (var call in calls)
+        {
+            Assert.AreEqual(181.15, call.DurationMs!.Value, 0.000001);
+            var tree = fixture.Query(new(View: "call", Id: call.Id, Depth: 4));
+            Assert.AreEqual(1, tree.Rows.Count);
+            Assert.AreEqual("complete", tree.Rows.Single().Call!.Status);
+        }
     }
 
     [TestMethod]

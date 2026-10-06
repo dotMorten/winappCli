@@ -157,23 +157,72 @@ public class PerfAnalysisTests
     }
 
     [TestMethod]
-    public void LegacyParserAndImageScopesUseVerifiedPayloadContracts()
+    public void LegacyParserAndImageEventsUseVerifiedPayloadContracts()
     {
         var uri = Encoding.Unicode.GetBytes("Views/MainPage.xaml\0");
         var parse = WinUiEventDecoder.Decode(new PerfRawEvent(10, 1, 7, PerfProviders.Xaml, 1, 0, 1,
             Guid.Empty, 8, false, uri, null, null, null), "v1", 0, 1000)!;
-        var image = WinUiEventDecoder.Decode(new PerfRawEvent(20, 1, 7, PerfProviders.Xaml, 145, 0, 1,
+        var image = WinUiEventDecoder.Decode(new PerfRawEvent(20, 1, 7, PerfProviders.Xaml, 146, 0, 2,
             Guid.Empty, 8, false, uri, null, null, null), "v2", 0, 1000)!;
         var versionedImage = WinUiEventDecoder.Decode(new PerfRawEvent(30, 1, 7, PerfProviders.Xaml, 360, 1, 1,
             Guid.Empty, 8, false, new byte[48], null, null, null), "v3", 0, 1000)!;
 
         Assert.AreEqual(("ParseXaml", "parsing", "begin", "Views/MainPage.xaml"),
             (parse.Name, parse.Family, parse.Phase, parse.Fields["URI"]));
-        Assert.AreEqual(("ImageCacheDecode", "images", "begin", "Views/MainPage.xaml"),
+        Assert.AreEqual(("ImageCacheDecode", "images", "info", "Views/MainPage.xaml"),
             (image.Name, image.Family, image.Phase, image.Fields["URI"]));
         Assert.IsNull(versionedImage.DecodeError);
         Assert.AreEqual("DecodeToRenderSize", versionedImage.Name);
         Assert.AreEqual("0", versionedImage.Fields["DecodeWidth"]);
+    }
+
+    [TestMethod]
+    [DataRow((ushort)20, (byte)1)]
+    [DataRow((ushort)21, (byte)2)]
+    public void LegacyComponentLoadEventsAreNotDecoded(ushort descriptor, byte opcode)
+    {
+        var payload = descriptor == 20 ? Encoding.Unicode.GetBytes("Views/MainPage.xaml\0") : [];
+        var raw = new PerfRawEvent(10, 1, 1, PerfProviders.Xaml, descriptor, 0, opcode,
+            Guid.Empty, 8, false, payload, null, null, null);
+
+        Assert.IsNull(WinUiEventDecoder.Decode(raw, "legacy-load", 0, 1000));
+    }
+
+    [TestMethod]
+    public void EndOnlyImageDecodeIsInformationalAndDoesNotCorruptAnOpenScope()
+    {
+        var calls = new List<PerfCall>();
+        var analyzer = new PerfAnalyzer(calls.Add);
+        analyzer.Accept(Event("MeasureElement", "begin", 0));
+        var image = WinUiEventDecoder.Decode(new PerfRawEvent(10, 1, 1, PerfProviders.Xaml, 146, 0, 2,
+            Guid.Empty, 8, false, Encoding.Unicode.GetBytes("Assets/Image.png\0"), null, null, null),
+            "image-end", 0, 1000)!;
+        analyzer.Accept(image);
+        analyzer.Accept(Event("MeasureElement", "end", 20));
+        analyzer.Complete();
+
+        Assert.AreEqual("info", image.Phase);
+        Assert.AreEqual("Assets/Image.png", image.Fields["URI"]);
+        Assert.AreEqual((byte)2, image.Opcode);
+        Assert.AreEqual(0, analyzer.IncompleteCalls);
+        Assert.AreEqual(1, calls.Count);
+        Assert.AreEqual(20d, calls.Single().DurationMs);
+    }
+
+    [TestMethod]
+    public void UnexpectedEndStillReportsMissingBoundariesAndCorruptsItsAncestor()
+    {
+        var calls = new List<PerfCall>();
+        var analyzer = new PerfAnalyzer(calls.Add);
+        analyzer.Accept(Event("MeasureElement", "begin", 0));
+        analyzer.Accept(Event("ArrangeElement", "end", 1));
+        analyzer.Accept(Event("MeasureElement", "end", 2));
+        analyzer.Complete();
+
+        Assert.AreEqual(2, analyzer.IncompleteCalls);
+        Assert.AreEqual("missing-begin", calls[0].Status);
+        Assert.AreEqual("corrupt-boundaries", calls[1].Status);
+        Assert.IsTrue(calls.All(c => c.DurationMs is null));
     }
 
     [TestMethod]
