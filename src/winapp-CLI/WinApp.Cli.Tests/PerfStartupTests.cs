@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Reflection.PortableExecutable;
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using WinApp.Cli.Commands;
 using WinApp.Cli.Services;
@@ -157,6 +158,91 @@ public sealed class PerfStartupTests
             Assert.IsNull(run.Error);
             Assert.AreEqual("recording", run.Result.State);
             Assert.AreEqual(PerfStartupGate.Coverage, run.Result.StartupCoverage);
+        }
+        finally
+        {
+            timeout.Cancel();
+            if (controller is not null)
+            {
+                try { await controller; }
+                catch (OperationCanceledException) when (timeout.IsCancellationRequested) { }
+            }
+            root.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    [DataRow("completed", true)]
+    [DataRow("failed", true)]
+    [DataRow("completed", false)]
+    public async Task FinalizedPackagedStartupUsesTheBoundPrivateRegistration(string state, bool matchingTarget)
+    {
+        var root = Directory.CreateTempSubdirectory("WinApp-Perf-Startup-Final-");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.CancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(20));
+        Task? controller = null;
+        try
+        {
+            var directory = Path.Join(root.FullName, "capture");
+            var service = new PerfCaptureService(new FakeWinappDirectoryService(root), new FakeAppLauncherService());
+            var run = new PerfRunCapture(service, directory, 1, 128, false);
+            var preparing = run.PrepareAsync(timeout.Token);
+            var path = Directory.GetFiles(Path.Join(root.FullName, "perf-control"), "control.json",
+                SearchOption.AllDirectories).Single();
+            var registration = PerfCaptureService.ReadRegistration(path);
+            Assert.IsNull(registration.Target);
+            var capture = PerfCaptureDocument.Load(directory);
+            // An already-exited target must not need to be reopened after recording completes.
+            var target = new PerfProcessIdentity(int.MaxValue, DateTime.UtcNow);
+            var otherTarget = target with { Pid = int.MaxValue - 1 };
+            using var pipe = new NamedPipeServerStream(PerfControlChannel.PipeName(registration.Id),
+                PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            controller = Task.Run(async () =>
+            {
+                await pipe.WaitForConnectionAsync(timeout.Token);
+                var request = await PerfControlChannel.ReadAsync(pipe, PerfJsonContext.Default.PerfControlRequest,
+                    4096, timeout.Token);
+                Assert.AreEqual("status", request.Operation);
+                await PerfControlChannel.WriteAsync(pipe, new PerfControlResponse(capture),
+                    PerfJsonContext.Default.PerfControlResponse, timeout.Token);
+                pipe.Disconnect();
+
+                await pipe.WaitForConnectionAsync(timeout.Token);
+                request = await PerfControlChannel.ReadAsync(pipe, PerfJsonContext.Default.PerfControlRequest,
+                    4096, timeout.Token);
+                Assert.AreEqual("status", request.Operation);
+                Assert.AreEqual(registration.Credential, request.Credential);
+                File.WriteAllText(path, JsonSerializer.Serialize(
+                    registration with { Target = matchingTarget ? target : otherTarget },
+                    PerfJsonContext.Default.PerfControlRegistration));
+                capture.Target = matchingTarget ? otherTarget : target;
+                capture.State = state;
+                capture.ReadyQpc = 1;
+                capture.StopQpc = 10;
+                capture.StartupCoverage = PerfStartupGate.Coverage;
+                capture.Error = state == "failed" ? "Deliberate recording failure." : null;
+                capture.Save();
+                pipe.Disconnect();
+            }, timeout.Token);
+            await preparing;
+
+            await run.BindAsync(checked((uint)target.Pid), DateTime.UnixEpoch, timeout.Token);
+
+            await controller;
+            Assert.AreEqual(matchingTarget ? state : "failed", run.Result.State);
+            if (matchingTarget && state == "completed")
+            {
+                Assert.IsNull(run.Error);
+                Assert.AreEqual(PerfStartupGate.Coverage, run.Result.StartupCoverage);
+            }
+            else if (matchingTarget)
+            {
+                Assert.AreEqual(capture.Error, run.Error);
+            }
+            else
+            {
+                Assert.IsNotNull(run.Error, "An editable capture manifest must not override the registered target.");
+            }
         }
         finally
         {

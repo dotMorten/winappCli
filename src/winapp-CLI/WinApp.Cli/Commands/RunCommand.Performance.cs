@@ -256,7 +256,8 @@ internal sealed class PerfRunCapture(PerfCaptureService service, string director
         catch (Exception ex) when ((ex is IOException or OperationCanceledException) && !token.IsCancellationRequested)
         {
             // Once the worker closes its pipe, its finalized manifest is no longer being updated.
-            var finalized = PerfCaptureService.ReadFinalCapture(registration!, "status");
+            var latestRegistration = PerfCaptureService.ReadRegistration(service.RegistrationPath(registration!.Id));
+            var finalized = PerfCaptureService.ReadFinalCapture(latestRegistration, "status");
             if (finalized is null) { throw; }
             return finalized;
         }
