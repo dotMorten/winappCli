@@ -62,7 +62,7 @@ export interface CommonOptions {
 
 /** Result returned by every command wrapper. */
 export interface WinappResult {
-  /** Process exit code (always 0 on success – non-zero throws). */
+  /** Process exit code: 0 for complete results, 1 for partial JSON perfAnalyze results. Other nonzero exits throw. */
   exitCode: number;
   /** Captured standard output. */
   stdout: string;
@@ -912,6 +912,15 @@ export interface PerfAnalyzeOptions extends CommonOptions {
 
 /**
  * Query a finalized winapp capture directory. ETL stays authoritative; derived NDJSON is cached locally. Partial evidence is returned with nonzero exit status.
+ * With json: true, partial_data results resolve with exitCode 1 and captured evidence.
+ * Check coverage.complete in parsed stdout and preserve stderr diagnostics.
+ * Text-mode nonzero exits and other failures reject.
+ * @example
+ * const result = await perfAnalyze({ directory: 'capture', json: true });
+ * const evidence = JSON.parse(result.stdout);
+ * if (!evidence.coverage.complete) {
+ *   console.warn(result.stderr);
+ * }
  */
 export async function perfAnalyze(options: PerfAnalyzeOptions): Promise<WinappResult> {
   const args: string[] = ['perf', 'analyze'];

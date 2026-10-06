@@ -412,7 +412,7 @@ function generate() {
     emitType(lines, name, symbol, external);
   }
 
-  return lines.join('\n') + '\n';
+  return lines.join('\n').trimEnd() + '\n';
 }
 
 // ---------------------------------------------------------------------------

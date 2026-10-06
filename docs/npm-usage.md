@@ -53,7 +53,7 @@ Result returned by every command wrapper.
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
-| `exitCode` | `number` | Yes | Process exit code (always 0 on success – non-zero throws). |
+| `exitCode` | `number` | Yes | Process exit code: 0 for complete results, 1 for partial JSON perfAnalyze results. Other nonzero exits throw. |
 | `stdout` | `string` | Yes | Captured standard output. |
 | `stderr` | `string` | Yes | Captured standard error. |
 
@@ -565,6 +565,9 @@ function packageApp(options: PackageOptions): Promise<WinappResult>
 ### `perfAnalyze()`
 
 Query a finalized winapp capture directory. ETL stays authoritative; derived NDJSON is cached locally. Partial evidence is returned with nonzero exit status.
+With json: true, partial_data results resolve with exitCode 1 and captured evidence.
+Check coverage.complete in parsed stdout and preserve stderr diagnostics.
+Text-mode nonzero exits and other failures reject.
 
 ```typescript
 function perfAnalyze(options: PerfAnalyzeOptions): Promise<WinappResult>
@@ -596,6 +599,16 @@ function perfAnalyze(options: PerfAnalyzeOptions): Promise<WinappResult>
 | `view` | `string \| undefined` | No | summary, parsing, elements, element, frames, hotspots, events, calls, call, or gc. |
 
 *Also accepts [CommonOptions](#commonoptions) (`quiet`, `verbose`, `cwd`, `signal`, `workflowId`).*
+
+**Example:**
+
+```typescript
+const result = await perfAnalyze({ directory: 'capture', json: true });
+const evidence = JSON.parse(result.stdout);
+if (!evidence.coverage.complete) {
+  console.warn(result.stderr);
+}
+```
 
 ---
 

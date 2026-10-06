@@ -35,7 +35,7 @@ import type { PerfStartOptions, PerfMarkOptions } from '../src/winapp-commands';
  * immediately resolves with a success exit code. winapp-cli-utils reads spawn off
  * the shared builtin module at call time, so mutating it here is observed by run().
  */
-function captureSpawnArgs(exitCode = 0, stdout = '', stderr = ''): { calls: string[][] } {
+function captureSpawnArgs(exitCode: number | null = 0, stdout = '', stderr = ''): { calls: string[][] } {
   const state = { calls: [] as string[][] };
   mock.method(childProcess, 'spawn', ((_cmd: string, args: string[]) => {
     state.calls.push(args);
@@ -116,31 +116,67 @@ test('perf start preserves process names and window titles as one app argument',
   );
 });
 
-test('partial perf queries reject without discarding bounded evidence on stdout', async () => {
+test('partial JSON perf queries return bounded evidence and preserve the nonzero exit code', async () => {
   const evidence = '{"rows":[{"id":"e1"}],"coverage":{"complete":false}}';
   const failure = '{"code":"partial_data","partialOutput":true}';
   const state = captureSpawnArgs(1, evidence, failure);
-  await assert.rejects(
-    perfAnalyze({
-      directory: 'trace',
-      fromMarker: 'scroll-start',
-      toMarker: 'scroll-end',
-      view: 'elements',
-      limit: 10,
-      maxBytes: 4096,
-      json: true,
-    }),
-    (error: unknown) => {
-      assert.ok(error instanceof Error && 'stdout' in error && 'stderr' in error && 'exitCode' in error);
-      assert.equal(error.stdout, evidence);
-      assert.equal(error.stderr, failure);
-      assert.equal(error.exitCode, 1);
-      return true;
-    }
-  );
+  const result = await perfAnalyze({
+    directory: 'trace',
+    fromMarker: 'scroll-start',
+    toMarker: 'scroll-end',
+    view: 'elements',
+    limit: 10,
+    maxBytes: 4096,
+    json: true,
+  });
+  assert.deepEqual(result, { exitCode: 1, stdout: evidence, stderr: failure });
   assert.deepEqual(state.calls[0].slice(0, 2), ['perf', 'analyze']);
   assert.equal(state.calls[0][state.calls[0].indexOf('--') + 1], 'trace');
   assert.equal(state.calls[0][state.calls[0].indexOf('--from-marker') + 1], 'scroll-start');
+});
+
+for (const [name, exitCode, stdout, stderr] of [
+  ['invalid arguments', 1, '', '{"code":"invalid_arguments","partialOutput":false}'],
+  ['capture failure', 1, '', '{"code":"performance_error","partialOutput":false}'],
+  [
+    'unrecognized exit code',
+    2,
+    '{"rows":[],"coverage":{"complete":false}}',
+    '{"code":"partial_data","partialOutput":true}',
+  ],
+  [
+    'terminated process',
+    null,
+    '{"rows":[],"coverage":{"complete":false}}',
+    '{"code":"partial_data","partialOutput":true}',
+  ],
+  ['missing partial output flag', 1, '{"rows":[],"coverage":{"complete":false}}', '{"code":"partial_data"}'],
+  ['empty evidence', 1, '', '{"code":"partial_data","partialOutput":true}'],
+  ['malformed evidence', 1, 'not JSON', '{"code":"partial_data","partialOutput":true}'],
+  ['missing rows', 1, '{"coverage":{"complete":false}}', '{"code":"partial_data","partialOutput":true}'],
+  ['missing coverage', 1, '{"rows":[]}', '{"code":"partial_data","partialOutput":true}'],
+  ['complete coverage', 1, '{"rows":[],"coverage":{"complete":true}}', '{"code":"partial_data","partialOutput":true}'],
+  ['malformed diagnostic', 1, '{"rows":[],"coverage":{"complete":false}}', 'not JSON'],
+  ['text partial result', 1, 'Observed activity: Layout 10 ms', 'Partial evidence returned.'],
+] as const) {
+  test(`perfAnalyze still rejects ${name} and preserves the original output`, async () => {
+    captureSpawnArgs(exitCode, stdout, stderr);
+    await assert.rejects(
+      perfAnalyze({ directory: 'trace', json: name !== 'text partial result' }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error && 'stdout' in error && 'stderr' in error && 'exitCode' in error);
+        assert.equal(error.exitCode, exitCode ?? 1);
+        assert.equal(error.stdout, stdout);
+        assert.equal(error.stderr, stderr);
+        return true;
+      }
+    );
+  });
+}
+
+test('other commands do not accept partial-data diagnostics as a successful result', async () => {
+  captureSpawnArgs(1, '{"rows":[],"coverage":{"complete":false}}', '{"code":"partial_data","partialOutput":true}');
+  await assert.rejects(perfStatus({ captureId: 'capture', json: true }), /winapp-cli exited with code 1/);
 });
 
 test('operation trees and GC queries preserve bounded analysis arguments', async () => {

@@ -374,7 +374,7 @@ function generate(schema) {
   L();
   L('/** Result returned by every command wrapper. */');
   L('export interface WinappResult {');
-  L('  /** Process exit code (always 0 on success – non-zero throws). */');
+  L('  /** Process exit code: 0 for complete results, 1 for partial JSON perfAnalyze results. Other nonzero exits throw. */');
   L('  exitCode: number;');
   L('  /** Captured standard output. */');
   L('  stdout: string;');
@@ -499,6 +499,17 @@ function generate(schema) {
     const defaultArg = hasRequiredArgs ? '' : ' = {}';
     L('/**');
     L(` * ${cleanDesc(cmd.description)}`);
+    if (cmdPathStr === 'perf analyze') {
+      L(' * With json: true, partial_data results resolve with exitCode 1 and captured evidence.');
+      L(' * Check coverage.complete in parsed stdout and preserve stderr diagnostics.');
+      L(' * Text-mode nonzero exits and other failures reject.');
+      L(' * @example');
+      L(" * const result = await perfAnalyze({ directory: 'capture', json: true });");
+      L(' * const evidence = JSON.parse(result.stdout);');
+      L(' * if (!evidence.coverage.complete) {');
+      L(' *   console.warn(result.stderr);');
+      L(' * }');
+    }
     L(' */');
     L(`export async function ${fnName}(options: ${ifaceName}${defaultArg}): Promise<WinappResult> {`);
 
