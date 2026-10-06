@@ -46,7 +46,8 @@ internal sealed class PerfAnalyzer(Action<PerfCall> emitCall)
     {
         if (e.DecodeError is not null)
         {
-            if (e.Family != "metadata" && stacks.TryGetValue(e.Thread, out var broken))
+            // Unclassified diagnostics do not establish operation boundaries.
+            if (e.Family is not ("metadata" or "unknown") && stacks.TryGetValue(e.Thread, out var broken))
             {
                 foreach (var scope in broken)
                 {

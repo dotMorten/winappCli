@@ -96,6 +96,15 @@ public sealed class PerfFixtureTests
                     row.GcInterval is { IsGcSuspension: true, Status: "complete", DurationMs: > 0 }));
                 Assert.IsTrue(result.Rows.Any(row =>
                     row.GcInterval is { Kind: "collection", CollectionType: "blocking", Status: "complete", DurationMs: > 0 }));
+
+                analysis.Manifest.AnalyzerVersion = 1;
+                File.WriteAllText(Path.Join(analysis.Directory, "manifest.json"),
+                    JsonSerializer.Serialize(analysis.Manifest, PerfJsonContext.Default.PerfAnalysisManifest));
+                var rebuilt = PerfAnalysisStore.Open(gcCapture.FullName, gcTimeout.Token);
+                Assert.AreEqual(2, rebuilt.Manifest.AnalyzerVersion);
+                var rebuiltResult = PerfQuery.Execute(rebuilt, new(View: "gc", Limit: 100));
+                Assert.AreEqual(JsonSerializer.Serialize(result, PerfJsonContext.Default.PerfQueryResult),
+                    JsonSerializer.Serialize(rebuiltResult, PerfJsonContext.Default.PerfQueryResult));
             }
             finally
             {

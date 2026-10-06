@@ -222,6 +222,66 @@ public class PerfAnalysisTests
     }
 
     [TestMethod]
+    public void UnsupportedDiagnosticPreservesNestedOperationTimings()
+    {
+        var calls = new List<PerfCall>();
+        var analyzer = new PerfAnalyzer(calls.Add);
+        analyzer.Accept(Event("Frame", "begin", 0, address: null, family: "frames"));
+        analyzer.Accept(Event("Layout", "begin", 2, address: null));
+        analyzer.Accept(Event("MeasureElement", "begin", 3));
+        var diagnostic = WinUiEventDecoder.Decode(new PerfRawEvent(5000, 1, 1, PerfProviders.Xaml,
+            0, 0, 0, Guid.Empty, 8, true, [], "FallbackError", null,
+            "Unsupported structured or variable-length TDH property."), "diagnostic", 0, 1000)!;
+
+        analyzer.Accept(diagnostic);
+        analyzer.Accept(Event("MeasureElement", "end", 8));
+        analyzer.Accept(Event("Layout", "end", 10, address: null));
+        analyzer.Accept(Event("Frame", "end", 12, address: null, family: "frames"));
+        analyzer.Complete();
+
+        Assert.AreEqual("unknown", diagnostic.Family);
+        Assert.AreEqual("unknown", diagnostic.Phase);
+        Assert.IsNotNull(diagnostic.DecodeError, "Unsupported diagnostic evidence must remain visible.");
+        Assert.AreEqual(0, analyzer.IncompleteCalls);
+        Assert.AreEqual(3, calls.Count);
+        Assert.IsTrue(calls.All(call => call.Status == "complete"));
+        var frame = calls.Single(call => call.Name == "Frame");
+        var layout = calls.Single(call => call.Name == "Layout");
+        var measure = calls.Single(call => call.Name == "MeasureElement");
+        Assert.AreEqual(12d, frame.DurationMs);
+        Assert.AreEqual(4d, frame.ExclusiveMs);
+        Assert.AreEqual(8d, layout.DurationMs);
+        Assert.AreEqual(3d, layout.ExclusiveMs);
+        Assert.AreEqual(5d, measure.DurationMs);
+        Assert.AreEqual(5d, measure.SelfMs);
+        Assert.AreEqual(5d, measure.ExclusiveMs);
+        Assert.AreEqual(frame.Id, layout.ParentCallId);
+        Assert.AreEqual(layout.Id, measure.ParentCallId);
+    }
+
+    [TestMethod]
+    public void MalformedKnownScopeStillCorruptsOpenOperationTimings()
+    {
+        var calls = new List<PerfCall>();
+        var analyzer = new PerfAnalyzer(calls.Add);
+        analyzer.Accept(Event("Frame", "begin", 0, address: null, family: "frames"));
+        analyzer.Accept(Event("Layout", "begin", 2, address: null));
+        var boundary = WinUiEventDecoder.Decode(new PerfRawEvent(5000, 1, 1, PerfProviders.Xaml,
+            47, 0, 1, Guid.Empty, 8, false, [], null, null, null), "malformed-begin", 0, 1000)!;
+
+        analyzer.Accept(boundary);
+        analyzer.Accept(Event("Layout", "end", 10, address: null));
+        analyzer.Accept(Event("Frame", "end", 12, address: null, family: "frames"));
+        analyzer.Complete();
+
+        Assert.AreEqual("layout", boundary.Family);
+        Assert.IsNotNull(boundary.DecodeError);
+        Assert.AreEqual(2, analyzer.IncompleteCalls);
+        Assert.IsTrue(calls.All(call => call.Status == "corrupt-boundaries" &&
+            call.DurationMs is null && call.ExclusiveMs is null && call.SelfMs is null));
+    }
+
+    [TestMethod]
     public void UnexpectedEndStillReportsMissingBoundariesAndCorruptsItsAncestor()
     {
         var calls = new List<PerfCall>();
