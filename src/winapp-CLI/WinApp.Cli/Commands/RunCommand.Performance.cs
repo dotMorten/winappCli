@@ -51,6 +51,10 @@ internal partial class RunCommand
                 }
                 return await InvokeCoreAsync(parseResult, cancellationToken);
             }
+            if (!ExecutionTargetSelection.Resolve(parseResult).IsLocal)
+            {
+                return Fail("--profile only records on this machine. Remove --on sandbox or --profile.", json);
+            }
             var duration = parseResult.GetValue(ProfileDurationOption);
             var size = parseResult.GetValue(ProfileSizeOption);
             if (duration is < 1 or > 300 || size is < 1 or > 1024 || parseResult.GetValue(NoLaunchOption))

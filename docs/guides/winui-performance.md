@@ -10,6 +10,9 @@ The default recording lasts 30 seconds and allows 128 MiB of raw ETL. Override
 these with `--duration-sec` (1-300) and `--profile-max-size-mib` (1-1024).
 Without `--detach`, `run` continues waiting for the app after recording finishes.
 Stopping a recording never closes the app.
+Profiling runs only on this machine. `run --profile --on sandbox` fails before
+building or launching; remove `--on sandbox` to profile locally, or remove
+`--profile` to run in Windows Sandbox without recording.
 Closing the app ends and finalizes its recording immediately, including with
 `--detach`; it does not wait for the duration limit. Status reports `completed`
 with stop reason `target-exited`. Retained events remain available for analysis.
