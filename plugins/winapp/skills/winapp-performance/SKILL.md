@@ -12,6 +12,9 @@ description: Investigate slow WinUI 3 layout, scrolling and virtualization using
    `--app` also accepts a process name or window title using the same matching
    rules as `winapp ui`. Use the returned `target.pid` for subsequent UI actions.
    For a new launch, use `winapp run <project> --profile <empty-directory> --detach --json`.
+   For startup investigations, follow the guide's
+   [startup workflow](https://github.com/microsoft/WinAppCli/blob/main/docs/guides/winui-performance.md#record-startup-layout)
+   and check `Profile.StartupCoverage`; do not add startup delays or replace a generated `Main`.
 3. Wait for successful recording readiness. Save the returned capture ID.
 4. Mark the beginning with `winapp perf mark <id> --name scenario-start --json`,
    drive a short repeatable scenario with verified UI selectors, wait for its

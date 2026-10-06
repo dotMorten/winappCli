@@ -5,6 +5,7 @@ using System.CommandLine;
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using WinApp.Cli.Services;
 using WinApp.Cli.Services.Performance;
 
 namespace WinApp.Cli.Commands;
@@ -20,7 +21,7 @@ internal partial class RunCommand
 
     public static Option<string?> ProfileOption { get; } = new("--profile")
     {
-        Description = "Record WinUI 3 performance ETW to an empty directory. Attaches after the real PID is available; early startup events may be missed.",
+        Description = "Record WinUI 3 performance ETW to an empty directory. Enables providers before a new process reaches its executable entry point; earlier DLL and TLS initialization is not recorded.",
     };
     public static Option<int> ProfileDurationOption { get; } = new("--profile-duration-sec")
     {
@@ -112,17 +113,51 @@ internal partial class RunCommand
             }
         }
 
-        private async Task BindProfileAsync(uint pid, DateTime launchedAfter, CancellationToken token)
+        private async Task<ILaunchedProcess> LaunchExecutableWithProfileAsync(string executable, string? arguments,
+            string? workingDirectory, LaunchStdioMode stdio, CancellationToken token)
+        {
+            await PrepareProfileAsync(token);
+            if (profileRun is null)
+            {
+                return appLauncherService.LaunchExecutable(executable, arguments, workingDirectory, stdio);
+            }
+            var launchedAfter = DateTime.UtcNow;
+            return await appLauncherService.LaunchExecutableForProfilingAsync(executable, arguments,
+                workingDirectory, stdio, pid => BindProfileAsync(pid, launchedAfter, token, true), token);
+        }
+
+        private async Task<uint> LaunchAumidWithProfileAsync(string aumid, string? arguments,
+            string? packageFullName, CancellationToken token)
+        {
+            if (profileRun is null)
+            {
+                return appLauncherService.LaunchByAumid(aumid, arguments);
+            }
+            packageFullName ??= appLauncherService.GetRegisteredPackageOrThrow(aumid.Split('!')[0])?.FullName;
+            if (string.IsNullOrEmpty(packageFullName))
+            {
+                throw new InvalidOperationException("Startup recording requires the activated package's full name.");
+            }
+            await PrepareProfileAsync(token);
+            using var debugging = appLauncherService.EnablePackageDebugging(packageFullName,
+                profileRun.StartupDebuggerCommand(packageFullName));
+            var launchedAfter = DateTime.UtcNow;
+            var pid = appLauncherService.LaunchByAumid(aumid, arguments);
+            await BindProfileAsync(pid, launchedAfter, token);
+            return pid;
+        }
+
+        private async Task BindProfileAsync(uint pid, DateTime launchedAfter, CancellationToken token, bool entryPoint = false)
         {
             if (profileRun is null)
             {
                 return;
             }
-            await profileRun.BindAsync(pid, launchedAfter, token);
+            await profileRun.BindAsync(pid, launchedAfter, token, entryPoint);
             if (profileRun.Error is null)
             {
-                logger.LogInformation("Performance capture {CaptureId}: {Directory}. Early startup may be missing.",
-                    profileRun.CaptureId, profileRun.Directory);
+                logger.LogInformation("Performance capture {CaptureId}: {Directory}. {StartupCoverage}.",
+                    profileRun.CaptureId, profileRun.Directory, profileRun.Result.StartupCoverage);
                 if (profileRun.Debugger)
                 {
                     logger.LogWarning("Debugger pauses perturb performance timings.");
@@ -131,6 +166,7 @@ internal partial class RunCommand
             else
             {
                 logger.LogError("Performance capture failed: {Error}", profileRun.Error);
+                throw new InvalidOperationException(profileRun.Error);
             }
         }
     }
@@ -158,19 +194,71 @@ internal sealed class PerfRunCapture(PerfCaptureService service, string director
         registration = await service.PrepareAsync(Directory, duration, size, token);
     }
 
-    public async Task BindAsync(uint pid, DateTime launchedAfter, CancellationToken token)
+    public string StartupDebuggerCommand(string packageFullName) =>
+        PerfStartupHelper.Command(service.RegistrationPath(registration!.Id), packageFullName, Debugger);
+
+    public async Task BindAsync(uint pid, DateTime launchedAfter, CancellationToken token, bool entryPoint = false)
     {
         try
         {
+            if (!entryPoint)
+            {
+                var existing = await StartupStatusAsync(token);
+                if (existing.Target is { } bound && bound.Pid == pid &&
+                    bound.CreationUtc >= launchedAfter && existing.StartupCoverage == PerfStartupGate.Coverage &&
+                    existing.State is "recording" or "completed" or "failed")
+                {
+                    capture = existing;
+                    if (existing.State == "failed") { Error = existing.Error ?? "Startup recording failed."; }
+                    return;
+                }
+            }
             using var target = Process.GetProcessById(checked((int)pid));
             var identity = PerfProcessIdentity.Read(target);
+            if (!entryPoint && identity.CreationUtc >= launchedAfter)
+            {
+                var until = Stopwatch.GetTimestamp() + 30 * Stopwatch.Frequency;
+                do
+                {
+                    token.ThrowIfCancellationRequested();
+                    var started = await StartupStatusAsync(token);
+                    if (started.Target == identity && started.StartupCoverage == PerfStartupGate.Coverage &&
+                        started.State is "recording" or "completed")
+                    {
+                        capture = started;
+                        return;
+                    }
+                    if (started.State == "failed")
+                    {
+                        throw new InvalidOperationException(started.Error ?? "Startup recording failed.");
+                    }
+                    await Task.Delay(50, token);
+                } while (Stopwatch.GetTimestamp() < until);
+                throw new TimeoutException("The startup helper did not prepare recording before the application entry point.");
+            }
             capture = await PerfCaptureService.BindAsync(registration!, identity,
-                identity.CreationUtc < launchedAfter ? "attached-to-existing; startup not recorded" : "post-launch attachment; early startup may be missing",
+                entryPoint ? PerfStartupGate.Coverage : "attached-to-existing; startup not recorded",
                 Debugger, token);
         }
         catch (Exception ex)
         {
             Error = ex.Message;
+        }
+    }
+
+    private async Task<PerfCaptureDocument> StartupStatusAsync(CancellationToken token)
+    {
+        try
+        {
+            return await PerfControlChannel.SendAsync(registration!,
+                new(registration!.Credential, "status"), token);
+        }
+        catch (Exception ex) when ((ex is IOException or OperationCanceledException) && !token.IsCancellationRequested)
+        {
+            // Once the worker closes its pipe, its finalized manifest is no longer being updated.
+            var finalized = PerfCaptureService.ReadFinalCapture(registration!, "status");
+            if (finalized is null) { throw; }
+            return finalized;
         }
     }
 

@@ -1115,7 +1115,7 @@ export interface RunOptions extends CommonOptions {
   noRestore?: boolean;
   /** Output directory for the loose layout package. If not specified, a directory named AppX inside the input directory will be used. */
   outputAppxDirectory?: string;
-  /** Record WinUI 3 performance ETW to an empty directory. Attaches after the real PID is available; early startup events may be missed. */
+  /** Record WinUI 3 performance ETW to an empty directory. Enables providers before a new process reaches its executable entry point; earlier DLL and TLS initialization is not recorded. */
   profile?: string;
   /** With --profile: trace for 1-300 seconds; stopping the trace does not stop the app. */
   profileDurationSec?: number;

@@ -741,7 +741,7 @@ function run(options?: RunOptions): Promise<WinappResult>
 | `noLaunch` | `boolean \| undefined` | No | Only create the debug identity and register the package without launching the application |
 | `noRestore` | `boolean \| undefined` | No | Project and single-file mode: skip restoring before build or Native AOT publish. Ignored in folder mode. |
 | `outputAppxDirectory` | `string \| undefined` | No | Output directory for the loose layout package. If not specified, a directory named AppX inside the input directory will be used. |
-| `profile` | `string \| undefined` | No | Record WinUI 3 performance ETW to an empty directory. Attaches after the real PID is available; early startup events may be missed. |
+| `profile` | `string \| undefined` | No | Record WinUI 3 performance ETW to an empty directory. Enables providers before a new process reaches its executable entry point; earlier DLL and TLS initialization is not recorded. |
 | `profileDurationSec` | `number \| undefined` | No | With --profile: trace for 1-300 seconds; stopping the trace does not stop the app. |
 | `profileMaxSizeMib` | `number \| undefined` | No | With --profile: maximum raw ETL size, 1-1024 MiB. |
 | `project` | `string \| undefined` | No | Project mode: when the input is a solution (.sln/.slnx) or a directory with multiple runnable app projects, selects which project to launch (by name or path). Ignored in folder mode. Rejected for a .cs file-based app, which is itself the project. |
@@ -2309,7 +2309,7 @@ type ManifestTemplates = "packaged" | "sparse"
 | `noLaunch` | `boolean \| undefined` | No | Only create the debug identity and register the package without launching the application |
 | `noRestore` | `boolean \| undefined` | No | Project and single-file mode: skip restoring before build or Native AOT publish. Ignored in folder mode. |
 | `outputAppxDirectory` | `string \| undefined` | No | Output directory for the loose layout package. If not specified, a directory named AppX inside the input directory will be used. |
-| `profile` | `string \| undefined` | No | Record WinUI 3 performance ETW to an empty directory. Attaches after the real PID is available; early startup events may be missed. |
+| `profile` | `string \| undefined` | No | Record WinUI 3 performance ETW to an empty directory. Enables providers before a new process reaches its executable entry point; earlier DLL and TLS initialization is not recorded. |
 | `profileDurationSec` | `number \| undefined` | No | With --profile: trace for 1-300 seconds; stopping the trace does not stop the app. |
 | `profileMaxSizeMib` | `number \| undefined` | No | With --profile: maximum raw ETL size, 1-1024 MiB. |
 | `project` | `string \| undefined` | No | Project mode: when the input is a solution (.sln/.slnx) or a directory with multiple runnable app projects, selects which project to launch (by name or path). Ignored in folder mode. Rejected for a .cs file-based app, which is itself the project. |

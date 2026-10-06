@@ -26,6 +26,22 @@ internal static class Program
                 return await PerfCaptureWorker.RunAsync(args,
                     args.Length == 2 ? new LoggingEtwApi(Path.ChangeExtension(args[1], ".native.log")) : null);
             }
+            if (args.Length > 0 && args[0] == PerfStartupHelper.InternalVerb)
+            {
+                return await PerfStartupHelper.RunAsync(args);
+            }
+            if (args.Length == 3 && args[0] == "startup-event")
+            {
+                Emit(Guid.Parse(args[1]));
+                File.WriteAllText(Path.Join(args[2], "main-ran"), "");
+                var until = Stopwatch.GetTimestamp() + 30 * Stopwatch.Frequency;
+                while (!File.Exists(Path.Join(args[2], "release")))
+                {
+                    if (Stopwatch.GetTimestamp() >= until) { throw new TimeoutException("The startup probe was not released."); }
+                    Thread.Sleep(20);
+                }
+                return 7;
+            }
             if (args.Length == 3 && args[0] is "worker" or "stop" or "launch")
             {
                 var directories = new WinappDirectoryService(new CurrentDirectoryProvider(Environment.CurrentDirectory));

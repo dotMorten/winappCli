@@ -137,6 +137,7 @@ internal sealed record PerfCommandError(string Code, string Message, bool Partia
 [JsonSerializable(typeof(PerfControlRequest))]
 [JsonSerializable(typeof(PerfControlResponse))]
 [JsonSerializable(typeof(PerfControlRegistration))]
+[JsonSerializable(typeof(PerfStartupRegistration))]
 [JsonSerializable(typeof(PerfEvent))]
 [JsonSerializable(typeof(PerfCall))]
 [JsonSerializable(typeof(PerfGcInterval))]

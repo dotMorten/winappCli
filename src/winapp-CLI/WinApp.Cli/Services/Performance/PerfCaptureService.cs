@@ -16,6 +16,8 @@ internal sealed class PerfCaptureService(IWinappDirectoryService directories, IA
 {
     private string RegistryRoot => Path.Join(directories.GetGlobalWinappDirectory().FullName, "perf-control");
 
+    internal string RegistrationPath(string id) => Path.Join(RegistryRoot, id, "control.json");
+
     public async Task<PerfControlRegistration> PrepareAsync(string directory, int durationSec, int maxSizeMiB,
         CancellationToken token)
     {

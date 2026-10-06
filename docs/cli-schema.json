@@ -3459,7 +3459,7 @@
           "recursive": false
         },
         "--profile": {
-          "description": "Record WinUI 3 performance ETW to an empty directory. Attaches after the real PID is available; early startup events may be missed.",
+          "description": "Record WinUI 3 performance ETW to an empty directory. Enables providers before a new process reaches its executable entry point; earlier DLL and TLS initialization is not recorded.",
           "hidden": false,
           "valueType": "System.String",
           "hasDefaultValue": false,

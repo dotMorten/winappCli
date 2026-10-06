@@ -912,10 +912,7 @@ internal partial class RunCommand : Command, IShortDescription, ITargetAwareComm
 
                     // Step 3: Launch the application using IApplicationActivationManager
                     taskContext.AddDebugMessage($"{UiSymbols.Rocket} Launching application...");
-                    await PrepareProfileAsync(cancellationToken);
-                    var launchedAfter = DateTime.UtcNow;
-                    processId = appLauncherService.LaunchByAumid(aumid, appArgs);
-                    await BindProfileAsync(processId, launchedAfter, cancellationToken);
+                    processId = await LaunchAumidWithProfileAsync(aumid, appArgs, packageFullName, cancellationToken);
 
                     return (0, $"{packageFamilyName} launched (PID: {processId})");
                 }
@@ -1023,15 +1020,12 @@ internal partial class RunCommand : Command, IShortDescription, ITargetAwareComm
                 {
                     try
                     {
-                        await PrepareProfileAsync(cancellationToken);
+                        processId = await LaunchAumidWithProfileAsync(aumid, appArgs, packageFullName, cancellationToken);
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
                     {
-                        return Fail($"Failed to prepare performance capture: {ex.Message}", isJson);
+                        return Fail($"Failed to launch with performance capture: {ex.Message}", isJson);
                     }
-                    var launchedAfter = DateTime.UtcNow;
-                    processId = appLauncherService.LaunchByAumid(aumid, appArgs);
-                    await BindProfileAsync(processId, launchedAfter, cancellationToken);
                 }
             }
 
@@ -1442,31 +1436,38 @@ internal partial class RunCommand : Command, IShortDescription, ITargetAwareComm
 
             try
             {
-                await PrepareProfileAsync(cancellationToken);
-                var launchedAfter = DateTime.UtcNow;
-                using var process = ProcessStarter(psi);
+                ILaunchedProcess? launched;
+                if (profileRun is null)
+                {
+                    var started = ProcessStarter(psi);
+                    launched = started is null ? null : new LaunchedProcess(started);
+                }
+                else
+                {
+                    launched = await LaunchExecutableWithProfileAsync(psi.FileName, psi.Arguments,
+                        psi.WorkingDirectory, LaunchStdioMode.Inherit, cancellationToken);
+                }
+                using var process = launched;
                 if (process == null)
                 {
                     logger.LogError("{UISymbol} Failed to start process via execution alias '{Alias}' ({Path}).", UiSymbols.Error, alias, aliasFile.FullName);
                     return 1;
                 }
-                await BindProfileAsync(unchecked((uint)process.Id), launchedAfter, cancellationToken);
-
                 if (targetSelector is not null)
                 {
                     WriteTargetLaunchConfirmation(
                         targetSelector,
-                        unchecked((uint)process.Id),
+                        process.ProcessId,
                         waitForExit: true);
                 }
 
                 if (debugOutput)
                 {
-                    var exitCode = await debugOutputService.RunDebugLoopAsync(unchecked((uint)process.Id), cancellationToken,
+                    var exitCode = await debugOutputService.RunDebugLoopAsync(process.ProcessId, cancellationToken,
                         useSymbols, symbolSearchPaths: [inputFolder.FullName]);
                     if (cancellationToken.IsCancellationRequested)
                     {
-                        appLauncherService.TerminatePackageProcesses(packageFullName, unchecked((uint)process.Id));
+                        appLauncherService.TerminatePackageProcesses(packageFullName, process.ProcessId);
                     }
                     return exitCode;
                 }
@@ -1479,7 +1480,7 @@ internal partial class RunCommand : Command, IShortDescription, ITargetAwareComm
                 catch (OperationCanceledException)
                 {
                     // Ctrl+C — terminate all processes belonging to the package before exiting.
-                    appLauncherService.TerminatePackageProcesses(packageFullName, unchecked((uint)process.Id));
+                    appLauncherService.TerminatePackageProcesses(packageFullName, process.ProcessId);
                     return -1;
                 }
             }

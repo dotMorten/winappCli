@@ -20,12 +20,9 @@ The final buffered events or loss counters may be unavailable after process exit
 so coverage can still be partial. Stop explicitly before closing the app when
 preserving the final moments is important.
 
-Capture attaches as soon as the launched PID is available. It does **not** capture
-guaranteed first-instruction startup. Reactivating an existing packaged process is
-labeled attachment to an existing app. Readiness can take a few seconds while
-the app initializes. If it times out, let the app finish starting and record its
-PID with `perf start` instead. `--no-launch` cannot be combined with
-`--profile`. Existing `run` restrictions still apply; for example,
+For startup coverage and launch failures, see [Record startup layout](#record-startup-layout).
+`--no-launch` cannot be combined with `--profile`.
+Existing `run` restrictions still apply; for example,
 `--debug-output` cannot be combined with `--detach` or `--json`. Debugger pauses
 distort elapsed timings, so avoid attaching a debugger while profiling.
 
@@ -74,40 +71,30 @@ still match. Unknown loss remains unknown after recovery.
 The output directory must be empty. Keep it until you no longer need the evidence,
 and move captures only after stopping them.
 
-## Recording startup layout
+## Record startup layout
 
-If recording misses initial loading, temporarily add a delay as the first
-statement in your C# app's `Main`, before the existing WinUI initialization:
-
-```csharp
-System.Threading.Thread.Sleep(TimeSpan.FromSeconds(10));
+```powershell
+winapp run . --profile .\traces\startup --detach --json
 ```
 
-Keep the remaining startup code unchanged. Placing the delay before
-`Application.Start` pauses before the `App` instance or any app window is created.
-Putting it in the `App` constructor instead misses earlier initialization.
+For a new process, `winapp` pauses before the executable entry point, enables
+the recording providers, then resumes the app. This covers initial WinUI
+initialization, XAML parsing, and layout without adding sleeps, replacing a
+generated `Main`, or changing the executable on disk. Unpackaged launches,
+packaged activation, and execution aliases use this startup gate.
 
-If the project uses a generated `Main`, copy its entry-point class from
-`App.g.i.cs` under `obj` into a temporary source file, add the delay, and disable
-the generated entry point in the project file:
+Coverage begins before the executable entry point, not before Windows loads the
+process. Earlier DLL initialization and thread-local-storage (TLS) callbacks
+are not recorded. Check `Profile.StartupCoverage` in the launch result and the
+analysis coverage instead of assuming every startup operation was captured.
+If activation reuses an existing process, coverage is labeled
+`attached-to-existing; startup not recorded`. Close that instance before
+launching when you need its startup.
 
-```xml
-<PropertyGroup>
-  <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-</PropertyGroup>
-```
-
-Do not edit the generated file itself. Ask permission before modifying someone
-else's app, and undo the change after a recording.
-
-The delay gives the recorder time to attach; it does not guarantee readiness.
-If recording is not ready before startup resumes, increase the delay and retry
-with an empty capture directory. If delaying startup prevents activation or
-attachment, remove the delay rather than treating the capture as successful.
-This recipe has been verified with an unpackaged app, not packaged activation.
-
-Remove the delay and any temporary entry-point file and project constant when
-finished, preserving unrelated edits.
+If startup recording cannot become ready, the new paused process is terminated
+and `run` reports failure rather than letting startup proceed without recording.
+Launch without `--profile`, then use `perf start --app <pid>` to record a later
+scenario. Do not modify app code to work around a recording failure.
 
 ## Analyze the recording
 
