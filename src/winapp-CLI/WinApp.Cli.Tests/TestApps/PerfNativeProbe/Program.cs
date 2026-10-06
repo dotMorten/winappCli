@@ -163,7 +163,7 @@ internal static class Program
     private static unsafe void Emit(Guid provider)
     {
         Etw.REGHANDLE registration;
-        Check(Native.EventRegister(in provider, null, null, &registration));
+        Check(Native.EventRegister(in provider, null, null, out registration));
         try
         {
             var descriptor = new Etw.EVENT_DESCRIPTOR { Id = 42, Level = 4 };
