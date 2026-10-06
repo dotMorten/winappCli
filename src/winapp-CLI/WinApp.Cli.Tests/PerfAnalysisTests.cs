@@ -189,6 +189,18 @@ public class PerfAnalysisTests
     }
 
     [TestMethod]
+    [DataRow((ushort)15, (byte)1)]
+    [DataRow((ushort)16, (byte)2)]
+    public void UnusableEventCallbackDescriptorsAreNotDecoded(ushort descriptor, byte opcode)
+    {
+        var payload = descriptor == 15 ? Encoding.Unicode.GetBytes("OnClick\0") : [];
+        var raw = new PerfRawEvent(10, 1, 1, PerfProviders.Xaml, descriptor, 0, opcode,
+            Guid.Empty, 8, false, payload, null, null, null);
+
+        Assert.IsNull(WinUiEventDecoder.Decode(raw, "callback", 0, 1000));
+    }
+
+    [TestMethod]
     public void EndOnlyImageDecodeIsInformationalAndDoesNotCorruptAnOpenScope()
     {
         var calls = new List<PerfCall>();

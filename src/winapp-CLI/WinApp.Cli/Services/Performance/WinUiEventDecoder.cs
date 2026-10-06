@@ -35,8 +35,6 @@ internal static class WinUiEventDecoder
             [2] = new("ParseXaml", "parsing", 2, "s:URI"),
             [5] = new("ApplyTemplate", "layout", 1, "p:ElementId s:ClassName"),
             [6] = new("ApplyTemplate", "layout", 2, ""),
-            [15] = new("EventCallback", "input", 1, "s:CallbackName"),
-            [16] = new("EventCallback", "input", 2, ""),
             [26] = new("Tick", "frames", 0, "u:IsHighPriority"),
             [47] = new("MeasureElement", "layout", 1, "p:ElementId f:Width f:Height"),
             [48] = new("MeasureElement", "layout", 2, "p:ElementId f:DesiredWidth f:DesiredHeight"),

@@ -119,7 +119,7 @@ The default report starts with observed activity on the primary UI thread, then
 lists the 10 XAML resources with the most parsing time, followed by the detailed
 operation ranking. The text report skips the parsing-resource section when it is
 empty. Each activity interval belongs to only one category, so nested
-layout or parsing is not counted again as app-callback or framework time.
+layout or parsing is not counted again as framework time.
 Percentages use the selected range's wall-clock duration, not sampled CPU time.
 The text summary omits per-operation evidence IDs and count/mean/max/p95
 statistics for readability. Add `--json` to include them, or use a drill-down
@@ -135,7 +135,6 @@ include the structured `limitations` field.
 | Parsing | Timed XAML parsing and component-loading scopes |
 | Layout | Template application, measure, arrange, and related timed layout scopes |
 | Render | Concrete UI-thread render-walk and frame-submission scopes; the enclosing frame is not counted as rendering |
-| App callbacks | Timed application event callbacks invoked by XAML |
 | Other observed XAML | Other timed XAML framework, input, scrolling, virtualization, and initialization work |
 | Image decode/load | Timed image work on the selected UI thread; off-thread decode does not contribute |
 | Unclassified | The remaining selected-range time, including idle, waits, and uninstrumented work |

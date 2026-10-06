@@ -585,14 +585,13 @@ internal static class PerfQuery
     }
 
     private static readonly string[] ActivityCategories =
-        ["Parsing", "Layout", "Render", "App callbacks", "Other observed XAML", "Image decode/load"];
+        ["Parsing", "Layout", "Render", "Other observed XAML", "Image decode/load"];
 
     private static string? Category(PerfCall call) => call.Family switch
     {
         "parsing" => "Parsing",
         "layout" => "Layout",
         "images" => "Image decode/load",
-        "input" when call.Name == "EventCallback" => "App callbacks",
         "frames" when call.Name is "RenderWalk" or "SubmitFrame" => "Render",
         "frames" when call.Name == "Frame" => null,
         "gc" or "metadata" or "unknown" => null,
@@ -605,7 +604,6 @@ internal static class PerfQuery
         "Layout" => 5,
         "Render" => 4,
         "Image decode/load" => 3,
-        "App callbacks" => 2,
         _ => 1,
     };
 

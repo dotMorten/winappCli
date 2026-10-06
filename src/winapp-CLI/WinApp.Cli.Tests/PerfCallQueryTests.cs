@@ -52,10 +52,10 @@ public class PerfCallQueryTests
         {
             Frame("frame", 0, 100) with { Thread = 7 },
             Frame("other-frame", 0, 40) with { Thread = 8 },
-            Call("callback", 10, 60, "frame") with { Name = "EventCallback", Family = "input", Thread = 7 },
-            Call("layout", 20, 40, "callback") with { Thread = 7 },
+            Call("input", 10, 60, "frame") with { Name = "ProcessPointerInput", Family = "input", Thread = 7 },
+            Call("layout", 20, 40, "input") with { Thread = 7 },
             parse with { Thread = 7 },
-            Call("image", 40, 50, "callback") with { Name = "ImageCacheDecode", Family = "images", Thread = 7 },
+            Call("image", 40, 50, "input") with { Name = "ImageCacheDecode", Family = "images", Thread = 7 },
             Call("off-thread-image", 0, 90) with { Name = "OffThreadDecode", Family = "images", Thread = 8 },
             Call("render", 60, 80, "frame") with { Name = "RenderWalk", Family = "frames", Thread = 7 },
             Call("framework", 80, 90, "frame") with { Name = "PublicApiCall:SetValue", Family = "framework", Thread = 7 },
@@ -70,12 +70,13 @@ public class PerfCallQueryTests
         var result = fixture.Query(new(View: "summary", Limit: 100));
 
         Assert.AreEqual(7u, result.PrimaryUiThread);
+        Assert.AreEqual("Parsing,Layout,Render,Other observed XAML,Image decode/load,Unclassified",
+            string.Join(',', result.Activity!.Select(category => category.Category)));
         Assert.AreEqual(100d, result.Activity!.Sum(category => category.ObservedMs), 0.000001);
         AssertActivity(result, "Parsing", 5);
         AssertActivity(result, "Layout", 15);
         AssertActivity(result, "Render", 20);
-        AssertActivity(result, "App callbacks", 20);
-        AssertActivity(result, "Other observed XAML", 10);
+        AssertActivity(result, "Other observed XAML", 30);
         AssertActivity(result, "Image decode/load", 10);
         AssertActivity(result, "Unclassified", 20);
         Assert.AreEqual("Views/MainPage.xaml", result.ParsingResources!.Single().Resource);
