@@ -222,6 +222,70 @@ public class PerfCommandTests : BaseCommandTests
     }
 
     [TestMethod]
+    [DataRow("summary", false)]
+    [DataRow("parsing", false)]
+    [DataRow("summary", true)]
+    [DataRow("parsing", true)]
+    public async Task ParsingResourceLabelsPreserveFileNamesAndJsonKeepsFullUris(string view, bool json)
+    {
+        (string Resource, string Label)[] resources =
+        [
+            ("Views/[MainPage].xaml", "Views/[MainPage].xaml"),
+            ("ms-resource:///Files/Controls/HomePage/Views/MainPage.xaml",
+                "ms-resource:///Files...Views/MainPage.xaml"),
+            ("ms-resource:///Files/Controls/HomePage/Views/SettingsPage.xaml",
+                "ms-resource:///Files...s/SettingsPage.xaml"),
+            ("ms-resource:///Files/Microsoft.UI.Xaml/Controls/VeryLongDistinctiveResourceName.xaml",
+                "ms-...VeryLongDistinctiveResourceName.xaml"),
+            (@"C:\Projects\Example\Controls\HomePage\Views\SettingsPage.xaml",
+                @"C:\Projects\Example\...s\SettingsPage.xaml"),
+            (new string('x', 37) + ".xaml", new string('x', 37) + ".xaml"),
+            (new string('x', 38) + ".xaml", "..." + new string('x', 34) + ".xaml"),
+            ("ms-resource:///Files/" + new string('a', 50) + ".xaml",
+                "..." + new string('a', 34) + ".xaml"),
+        ];
+        var calls = resources.Select((resource, index) => new PerfCall(
+            "parse" + index, "ParseXaml", "parsing", 7, null, null,
+            "begin" + index, "end" + index, index, index + 1, 1, null, "complete", 1)).ToArray();
+        var events = resources.Select((resource, index) => new PerfEvent(
+            "begin" + index, index, index, 7, PerfProviders.Xaml, 1, 0, 1,
+            Guid.Empty, "ParseXaml", "parsing", "begin", null,
+            new() { ["URI"] = resource.Resource })).ToArray();
+        var directory = CreateCachedAnalysis(calls, events: events);
+        try
+        {
+            string[] args = ["analyze", directory.FullName, "--view", view];
+            if (json)
+            {
+                var (stdout, stderr, exitCode) = await InvokeProgramAsync(["perf", .. args, "--json"]);
+                Assert.AreEqual(0, exitCode);
+                Assert.AreEqual("", stderr);
+                using var result = JsonDocument.Parse(stdout);
+                var actual = view == "summary"
+                    ? result.RootElement.GetProperty("parsingResources").EnumerateArray()
+                        .Select(row => row.GetProperty("resource").GetString()).ToArray()
+                    : result.RootElement.GetProperty("rows").EnumerateArray()
+                        .Select(row => row.GetProperty("name").GetString()).ToArray();
+                CollectionAssert.AreEquivalent(resources.Select(resource => resource.Resource).ToArray(), actual);
+            }
+            else
+            {
+                var exitCode = await ParseAndInvokeWithCaptureAsync(GetRequiredService<PerfCommand>(), args);
+                Assert.AreEqual(0, exitCode);
+                foreach (var resource in resources)
+                {
+                    Assert.IsTrue(resource.Label.Length <= 42);
+                    StringAssert.Contains(TestAnsiConsole.Output, $"{resource.Label,-42} {1d,11:F3} {1,7}");
+                }
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task SummaryOmitsEmptyParsingSection()
     {
         var directory = CreateCachedAnalysis(

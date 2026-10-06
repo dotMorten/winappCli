@@ -146,7 +146,7 @@ internal sealed class PerfCommand : Command, IShortDescription
                         console.MarkupLineInterpolated($"[grey]{"Resource",-42} {"Observed ms",11} {"Count",7}[/]");
                         foreach (var resource in resources)
                         {
-                            console.WriteLine($"{Label(resource.Resource, 42),-42} {resource.ObservedMs,11:F3} {resource.Count,7}");
+                            console.WriteLine($"{ResourceLabel(resource.Resource, 42),-42} {resource.ObservedMs,11:F3} {resource.Count,7}");
                         }
                         if (result.ParsingResourcesOmitted is > 0)
                         {
@@ -163,7 +163,7 @@ internal sealed class PerfCommand : Command, IShortDescription
                 {
                     if (result.View == "parsing")
                     {
-                        console.WriteLine($"{Label(row.Name ?? row.Id, 42),-42} {row.InclusiveMs,11:F3} {row.Count,7}");
+                        console.WriteLine($"{ResourceLabel(row.Name ?? row.Id, 42),-42} {row.InclusiveMs,11:F3} {row.Count,7}");
                         continue;
                     }
                     var indent = new string(' ', (row.Depth ?? 0) * 2);
@@ -272,8 +272,17 @@ internal sealed class PerfCommand : Command, IShortDescription
         command.Options.Add(WinAppRootCommand.QuietOption);
     }
 
-    private static string Label(string value, int width) =>
-        value.Length <= width ? value : value[..(width - 3)] + "...";
+    private static string ResourceLabel(string value, int width)
+    {
+        if (value.Length <= width)
+        {
+            return value;
+        }
+        var available = width - 3;
+        var fileNameLength = value.Length - Math.Max(value.LastIndexOf('/'), value.LastIndexOf('\\')) - 1;
+        var suffixLength = Math.Min(available, Math.Max(available / 2, fileNameLength));
+        return value[..(available - suffixLength)] + "..." + value[^suffixLength..];
+    }
 
     private static void WriteSection(IAnsiConsole console, string title)
     {
