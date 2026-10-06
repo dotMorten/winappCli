@@ -47,7 +47,7 @@ internal sealed class PerfCaptureDocument
     public string StartupCoverage { get; set; } = "attached; startup not recorded";
     public bool DebuggerAttached { get; set; }
     public int DurationSec { get; set; } = 30;
-    public int MaxSizeMiB { get; set; } = 128;
+    public int MaxSizeMiB { get; set; } = 512;
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
     public DateTime? ReadyUtc { get; set; }
     public DateTime? StoppedUtc { get; set; }

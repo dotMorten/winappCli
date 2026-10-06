@@ -422,7 +422,7 @@ public class PerfAnalysisTests
         Assert.IsEmpty(result.Errors);
         Assert.AreEqual(@"C:\trace", result.GetValue(RunCommand.ProfileOption));
         Assert.AreEqual(30, result.GetValue(RunCommand.ProfileDurationOption));
-        Assert.AreEqual(128, result.GetValue(RunCommand.ProfileSizeOption));
+        Assert.AreEqual(512, result.GetValue(RunCommand.ProfileSizeOption));
     }
 
     [TestMethod]

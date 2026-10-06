@@ -28,7 +28,7 @@ internal sealed class PerfCommand : Command, IShortDescription
         var app = new Option<string>("--app", "-a") { Description = "Target WinUI 3 app (process name, window title, or PID).", Required = true };
         var output = new Option<string>("--output") { Description = "Empty capture directory to create.", Required = true };
         var duration = new Option<int>("--duration-sec") { Description = "Capture duration: 1-300 seconds.", DefaultValueFactory = _ => 30 };
-        var size = new Option<int>("--max-size-mib") { Description = "Maximum raw ETL size: 1-1024 MiB.", DefaultValueFactory = _ => 128 };
+        var size = new Option<int>("--max-size-mib") { Description = "Maximum raw ETL size: 1-1024 MiB.", DefaultValueFactory = _ => 512 };
         start.Options.Add(app);
         start.Options.Add(output);
         start.Options.Add(duration);

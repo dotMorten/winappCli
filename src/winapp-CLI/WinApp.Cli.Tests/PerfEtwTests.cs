@@ -144,6 +144,28 @@ public sealed class PerfEtwTests
         }
 
         [TestMethod]
+        public void UnfilteredProvidersAreNamedInOneSizeWarning()
+        {
+            var capture = new PerfCaptureDocument
+            {
+                Id = Guid.NewGuid().ToString("N"), Directory = @"C:\capture", SessionName = "owned",
+                ProviderStates =
+                [
+                    new(PerfProviders.Xaml, "enabled", null),
+                    new(PerfProviders.Diagnostics, "enabled", false),
+                    new(PerfProviders.Clr, "unavailable", null, "Denied."),
+                ],
+            };
+            var warning = PerfCaptureWorker.UnfilteredProvidersWarning(capture);
+            StringAssert.Contains(warning, "Microsoft-Windows-XAML-Diagnostics");
+            StringAssert.Contains(warning, "--max-size-mib");
+            Assert.IsFalse(warning!.Contains("DotNETRuntime"));
+
+            capture.ProviderStates = [new(PerfProviders.Diagnostics, "enabled", true)];
+            Assert.IsNull(PerfCaptureWorker.UnfilteredProvidersWarning(capture));
+        }
+
+        [TestMethod]
         public void NativePrivateGcEventsDecodeIntoQueryableSuspensions()
         {
             var directory = Directory.CreateTempSubdirectory("WinApp-Perf-Gc-Native-");

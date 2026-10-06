@@ -6,8 +6,11 @@ winapp run . --profile .\traces\startup --detach
 
 This launches your project and starts a bounded native WinUI 3 ETW recording.
 Use the returned capture ID with `winapp perf status` or `winapp perf stop`.
-The default recording lasts 30 seconds and allows 128 MiB of raw ETL. Override
+The default recording lasts 30 seconds and allows 512 MiB of raw ETL. Override
 these with `--profile-duration-sec` (1-300) and `--profile-max-size-mib` (1-1024).
+UI-heavy scenarios such as repeated page navigation can record several MiB per
+second. If a recording stops with stop reason `size-limit` before your scenario
+ends, raise the size limit or shorten the scenario.
 Without `--detach`, `run` continues waiting for the app after recording finishes.
 Stopping a recording never closes the app.
 Profiling runs only on this machine. `run --profile --on sandbox` fails before

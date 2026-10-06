@@ -190,6 +190,10 @@ internal sealed class PerfCaptureWorker : IDisposable
                 {
                     capture.ProviderStates.Add(EnableProvider(activeSession, provider));
                 }
+                if (UnfilteredProvidersWarning(capture) is { } unfiltered)
+                {
+                    capture.Warnings.Add(unfiltered);
+                }
                 capture.ReadyQpc = Stopwatch.GetTimestamp();
                 capture.ReadyUtc = DateTime.UtcNow;
                 deadline = capture.ReadyQpc.Value + capture.DurationSec * Stopwatch.Frequency;
@@ -257,6 +261,20 @@ internal sealed class PerfCaptureWorker : IDisposable
         {
             capture.RuntimeProbeError = ex.Message;
         }
+    }
+
+    internal static string? UnfilteredProvidersWarning(PerfCaptureDocument capture)
+    {
+        // Private ETW sessions accept only scope filters, so Windows can reject event-ID filtering
+        // and the provider records all of its events.
+        var names = capture.ProviderStates
+            .Where(s => s is { State: "enabled", EventIdFilterApplied: false })
+            .Select(s => capture.Providers.FirstOrDefault(p => p.Id == s.Id)?.Name ?? s.Id.ToString())
+            .ToArray();
+        return names.Length == 0 ? null :
+            $"Windows did not apply event filtering for {string.Join(", ", names)}, so unused events are also recorded. " +
+            "UI-heavy scenarios can reach the size limit quickly; if recording stops with size-limit, " +
+            "raise --max-size-mib (or --profile-max-size-mib) or shorten the scenario.";
     }
 
     internal static PerfProviderState EnableProvider(PrivateEtwSession session, PerfProvider provider)

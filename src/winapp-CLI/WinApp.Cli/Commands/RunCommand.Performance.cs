@@ -32,7 +32,7 @@ internal partial class RunCommand
     public static Option<int> ProfileSizeOption { get; } = new("--profile-max-size-mib")
     {
         Description = "With --profile: maximum raw ETL size, 1-1024 MiB.",
-        DefaultValueFactory = _ => 128,
+        DefaultValueFactory = _ => 512,
     };
 
     public partial class Handler
