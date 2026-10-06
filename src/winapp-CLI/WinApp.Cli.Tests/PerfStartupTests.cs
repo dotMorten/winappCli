@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Reflection.PortableExecutable;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using WinApp.Cli.Commands;
@@ -14,9 +15,177 @@ namespace WinApp.Cli.Tests;
 
 [TestClass]
 [DoNotParallelize]
-public sealed class PerfStartupTests
+public sealed partial class PerfStartupTests
 {
     public TestContext TestContext { get; set; } = null!;
+
+    [TestMethod]
+    [DataRow(Architecture.Arm64, Architecture.X64, false)]
+    [DataRow(Architecture.Arm64, Architecture.X86, false)]
+    [DataRow(Architecture.Arm64, Architecture.Arm64, true)]
+    [DataRow(Architecture.X64, Architecture.X64, true)]
+    public void StartupProfilingRequiresANativeCliOnArm64(Architecture osArchitecture,
+        Architecture processArchitecture, bool supported)
+    {
+        var error = PerfStartupGate.HostArchitectureError(osArchitecture, processArchitecture);
+        Assert.AreEqual(supported, error is null);
+        if (!supported)
+        {
+            StringAssert.Contains(error, "ARM64 winapp CLI");
+            StringAssert.Contains(error, "perf start");
+        }
+    }
+
+    [TestMethod]
+    public void ProfileEnvironmentPreservesInheritedValuesAndOverridesDebugHeapCaseInsensitively()
+    {
+        var inherited = new Dictionary<string, string?>
+        {
+            ["Path"] = @"C:\Windows",
+            ["_no_debug_heap"] = "0",
+            ["WINAPP_UNICODE"] = "\u00e9",
+            ["EMPTY"] = "",
+            ["OMITTED"] = null,
+        };
+        var block = PerfStartupGate.CreateEnvironmentBlock(inherited);
+        string[] expected =
+        [
+            "_no_debug_heap=1", "EMPTY=", @"Path=C:\Windows", "WINAPP_UNICODE=\u00e9",
+        ];
+        CollectionAssert.AreEquivalent(expected, block.Split('\0', StringSplitOptions.RemoveEmptyEntries));
+        Assert.IsTrue(block.EndsWith("\0\0", StringComparison.Ordinal));
+        Assert.AreEqual("0", inherited["_no_debug_heap"], "Only the child's environment should change.");
+        Assert.AreEqual("_NO_DEBUG_HEAP=1\0\0", PerfStartupGate.CreateEnvironmentBlock([]));
+    }
+
+    [TestMethod]
+    public async Task EmulatedX64CliRejectsProfileBeforeCreatingArtifacts()
+    {
+        if (RuntimeInformation.OSArchitecture != Architecture.Arm64)
+        {
+            Assert.Inconclusive("This case requires ARM64 Windows.");
+        }
+        var repository = new DirectoryInfo(AppContext.BaseDirectory);
+        while (repository is not null && !File.Exists(Path.Join(repository.FullName, "version.json")))
+        {
+            repository = repository.Parent;
+        }
+        Assert.IsNotNull(repository);
+        var executable = Path.Join(repository.FullName, "artifacts", "cli", "win-x64", "winapp.exe");
+        if (!File.Exists(executable))
+        {
+            Assert.Inconclusive("Build the x64 CLI artifact to exercise its emulated startup-profiling rejection.");
+        }
+        var directory = Directory.CreateTempSubdirectory("WinApp-Perf-Emulated-Cli-");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.CancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(40));
+        Process? process = null;
+        try
+        {
+            var capture = Path.Join(directory.FullName, "capture");
+            process = Process.Start(new ProcessStartInfo(executable)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                ArgumentList =
+                {
+                    "run", Path.Join(directory.FullName, "missing.csproj"),
+                    "--profile", capture, "--detach", "--json",
+                },
+            }) ?? throw new InvalidOperationException("Could not launch the emulated x64 CLI.");
+            var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.AreEqual(1, process.ExitCode);
+            Assert.AreEqual("", await stderr);
+            using var result = JsonDocument.Parse(await stdout);
+            StringAssert.Contains(result.RootElement.GetProperty("Error").GetString(), "ARM64 winapp CLI");
+            Assert.IsFalse(result.RootElement.TryGetProperty("Profile", out _));
+            Assert.IsFalse(Directory.Exists(capture));
+        }
+        finally
+        {
+            if (process is not null)
+            {
+                if (!process.HasExited) { process.Kill(entireProcessTree: true); }
+                await process.WaitForExitAsync(CancellationToken.None);
+                process.Dispose();
+            }
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task ProfiledProcessKeepsNormalHeapFlagsAndReceivesTheChildEnvironment()
+    {
+        var directory = Directory.CreateTempSubdirectory("WinApp-Perf-Heap-");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.CancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(40));
+        using var baseline = Process.Start(new ProcessStartInfo(Path.Join(Environment.SystemDirectory, "ping.exe"))
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            ArgumentList = { "-n", "30", "127.0.0.1" },
+        }) ?? throw new InvalidOperationException("Could not launch the normal heap baseline.");
+        try
+        {
+            var baselineFlags = ReadHeapFlags(baseline);
+            var marker = Path.Join(directory.FullName, "environment.txt");
+            using var process = await PerfStartupGate.LaunchAsync(
+                Path.Join(Environment.SystemDirectory, "cmd.exe"),
+                $"/d /c set PATH>\"{marker}\" & exit /b 7",
+                directory.FullName, LaunchStdioMode.Suppress, pid =>
+                {
+                    using var target = Process.GetProcessById(checked((int)pid));
+                    Assert.AreEqual(baselineFlags & 0x70u, ReadHeapFlags(target) & 0x70u,
+                        "The startup debugger must not enable additional heap checks.");
+                    return Task.CompletedTask;
+                }, timeout.Token);
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.AreEqual(7, process.ExitCode);
+            var variables = await File.ReadAllLinesAsync(marker, timeout.Token);
+            var path = variables.Single(line => line.StartsWith("PATH=", StringComparison.OrdinalIgnoreCase));
+            Assert.AreEqual(Environment.GetEnvironmentVariable("PATH"), path[5..]);
+        }
+        finally
+        {
+            if (!baseline.HasExited) { baseline.Kill(); }
+            await baseline.WaitForExitAsync(CancellationToken.None);
+            directory.Delete(recursive: true);
+        }
+    }
+
+    private static unsafe uint ReadHeapFlags(Process process)
+    {
+        Assert.AreEqual(0, NtQueryInformationProcess(process.Handle, 0, out var information,
+            (uint)sizeof(ProcessBasicInformation), out _));
+        uint flags = 0;
+        Assert.AreNotEqual(0, ReadProcessMemory(process.Handle, information.Peb + 0xbc,
+            &flags, sizeof(uint), out var read));
+        Assert.AreEqual((nuint)sizeof(uint), read);
+        return flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessBasicInformation
+    {
+        public nint ExitStatus;
+        public nint Peb;
+        public nint AffinityMask;
+        public nint BasePriority;
+        public nint ProcessId;
+        public nint ParentProcessId;
+    }
+
+    [LibraryImport("ntdll.dll")]
+    private static partial int NtQueryInformationProcess(nint process, int informationClass,
+        out ProcessBasicInformation information, uint length, out uint returned);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static unsafe partial int ReadProcessMemory(nint process, nint address, void* buffer,
+        nuint size, out nuint read);
 
     [TestMethod]
     [DataRow(false)]

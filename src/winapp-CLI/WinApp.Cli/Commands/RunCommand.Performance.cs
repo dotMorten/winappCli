@@ -3,6 +3,7 @@
 
 using System.CommandLine;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using WinApp.Cli.Services;
@@ -55,6 +56,11 @@ internal partial class RunCommand
             if (!ExecutionTargetSelection.Resolve(parseResult).IsLocal)
             {
                 return Fail("--profile only records on this machine. Remove --on sandbox or --profile.", json);
+            }
+            if (PerfStartupGate.HostArchitectureError(RuntimeInformation.OSArchitecture,
+                RuntimeInformation.ProcessArchitecture) is { } architectureError)
+            {
+                return Fail(architectureError, json);
             }
             var duration = parseResult.GetValue(ProfileDurationOption);
             var size = parseResult.GetValue(ProfileSizeOption);

@@ -20,9 +20,37 @@ internal static class PerfStartupGate
 {
     internal const string Coverage = "providers enabled before executable entry point; earlier DLL and TLS initialization not recorded";
 
+    internal static string? HostArchitectureError(Architecture osArchitecture, Architecture processArchitecture) =>
+        osArchitecture == Architecture.Arm64 && processArchitecture != Architecture.Arm64
+            ? "Startup profiling on ARM64 Windows requires the ARM64 winapp CLI. Use the ARM64 CLI for run --profile, or launch normally and use perf start to record an existing app."
+            : null;
+
+    internal static void ValidateHostArchitecture()
+    {
+        if (HostArchitectureError(RuntimeInformation.OSArchitecture, RuntimeInformation.ProcessArchitecture) is { } error)
+        {
+            throw new NotSupportedException(error);
+        }
+    }
+
+    internal static string CreateEnvironmentBlock(IEnumerable<KeyValuePair<string, string?>> inheritedEnvironment)
+    {
+        var environment = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in inheritedEnvironment)
+        {
+            environment[pair.Key] = pair.Value;
+        }
+        // Heap checks are chosen during initialization and survive the startup debugger's detach.
+        environment["_NO_DEBUG_HEAP"] = "1";
+        return string.Join('\0', environment.Where(pair => pair.Value is not null)
+            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(pair => pair.Key + "=" + pair.Value)) + "\0\0";
+    }
+
     public static async Task<ILaunchedProcess> LaunchAsync(string executable, string? arguments,
         string? workingDirectory, LaunchStdioMode stdio, Func<uint, Task> ready, CancellationToken token)
     {
+        ValidateHostArchitecture();
         using var paused = await Task.Factory.StartNew(
             () => CreatePaused(executable, arguments, workingDirectory, stdio, token),
             token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
@@ -34,6 +62,7 @@ internal static class PerfStartupGate
 
     public static async Task AttachAsync(int pid, uint threadId, Func<Process, Task> ready, CancellationToken token)
     {
+        ValidateHostArchitecture();
         using var paused = await Task.Factory.StartNew(
             () => AttachPaused(pid, threadId, token), token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         await ready(paused.Process);
@@ -77,13 +106,16 @@ internal static class PerfStartupGate
             };
             var command = (Helpers.WindowsCommandLine.EscapeArgument(executable) +
                 (string.IsNullOrEmpty(arguments) ? "" : " " + arguments) + '\0').ToCharArray();
-            var flags = PROCESS_CREATION_FLAGS.DEBUG_ONLY_THIS_PROCESS | PROCESS_CREATION_FLAGS.EXTENDED_STARTUPINFO_PRESENT;
+            var environment = CreateEnvironmentBlock(new ProcessStartInfo().Environment);
+            var flags = PROCESS_CREATION_FLAGS.DEBUG_ONLY_THIS_PROCESS |
+                PROCESS_CREATION_FLAGS.EXTENDED_STARTUPINFO_PRESENT | PROCESS_CREATION_FLAGS.CREATE_UNICODE_ENVIRONMENT;
             if (stdio == LaunchStdioMode.Suppress) { flags |= PROCESS_CREATION_FLAGS.CREATE_NO_WINDOW; }
             fixed (char* application = executable)
             fixed (char* commandLine = command)
+            fixed (char* environmentBlock = environment)
             fixed (char* directory = string.IsNullOrEmpty(workingDirectory) ? null : workingDirectory)
             {
-                Check(PInvoke.CreateProcess(application, commandLine, null, null, true, flags, null,
+                Check(PInvoke.CreateProcess(application, commandLine, null, null, true, flags, environmentBlock,
                     directory, &startup.StartupInfo, &information), "Create profiled process");
             }
             process = Process.GetProcessById(checked((int)information.dwProcessId));

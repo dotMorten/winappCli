@@ -91,6 +91,11 @@ If activation reuses an existing process, coverage is labeled
 `attached-to-existing; startup not recorded`. Close that instance before
 launching when you need its startup.
 
+On ARM64 Windows, use the ARM64 winapp CLI for `run --profile`, including when
+profiling an emulated x64 app. An emulated x64 CLI rejects startup profiling
+before building or launching. You can still launch normally and use
+`perf start --app <pid>` to record an existing app.
+
 If startup recording cannot become ready, the new paused process is terminated
 and `run` reports failure rather than letting startup proceed without recording.
 Launch without `--profile`, then use `perf start --app <pid>` to record a later

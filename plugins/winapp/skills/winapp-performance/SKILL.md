@@ -43,6 +43,9 @@ description: Investigate slow WinUI 3 layout, scrolling and virtualization using
 - Never elevate, change tracing ACLs, or modify app code to make capture work.
 - Recording is local only. Do not combine `run --profile` with `--on sandbox`;
   see the guide for the supported launch and recording commands.
+- For ARM64 startup profiling, follow the guide's
+  [startup workflow](https://github.com/microsoft/WinAppCli/blob/main/docs/guides/winui-performance.md#record-startup-layout)
+  for CLI architecture requirements.
 - Readiness is not decoded coverage. Missing events are inconclusive.
 - Use elapsed-time terminology; do not claim CPU/GPU attribution, displayed FPS,
   proven input-to-display latency, or complete startup/visual-tree coverage.

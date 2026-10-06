@@ -113,10 +113,15 @@ internal class AppLauncherService(ILogger<AppLauncherService> logger) : IAppLaun
         string? workingDirectory, LaunchStdioMode stdioMode, Func<uint, Task> ready, CancellationToken token) =>
         Performance.PerfStartupGate.LaunchAsync(exePath, arguments, workingDirectory, stdioMode, ready, token);
 
-    public IDisposable EnablePackageDebugging(string packageFullName, string debuggerCommandLine)
+    public unsafe IDisposable EnablePackageDebugging(string packageFullName, string debuggerCommandLine)
     {
+        Performance.PerfStartupGate.ValidateHostArchitecture();
         var settings = PackageDebugSettings.CreateInstance<IPackageDebugSettings>();
-        settings.EnableDebugging(packageFullName, debuggerCommandLine, null);
+        var environment = Performance.PerfStartupGate.CreateEnvironmentBlock([]);
+        fixed (char* environmentBlock = environment)
+        {
+            settings.EnableDebugging(packageFullName, debuggerCommandLine, new PZZWSTR(environmentBlock));
+        }
         return new PackageDebuggingScope(settings, packageFullName);
     }
 
