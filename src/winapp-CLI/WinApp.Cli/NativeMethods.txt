@@ -133,3 +133,4 @@ FlushInstructionCache
 DuplicateHandle
 GetCurrentProcess
 GetPackageFullName
+GetKeyState
