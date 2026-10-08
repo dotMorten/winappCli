@@ -546,8 +546,18 @@ public class PerfCommandTests : BaseCommandTests
     }
 
     [TestMethod]
+    public async Task UnknownProfileModeIsRejected()
+    {
+        var (stdout, _, code) = await InvokeProgramAsync(["run", ".", "--profile", "unused", "--profile-mode", "kernel", "--json"]);
+        Assert.AreEqual(1, code);
+        using var error = JsonDocument.Parse(stdout);
+        StringAssert.Contains(error.RootElement.GetProperty("Error").GetString(), "kernel");
+    }
+
+    [TestMethod]
     [DataRow("--profile-duration-sec", "2")]
     [DataRow("--profile-max-size-mib", "2")]
+    [DataRow("--profile-mode", "elevated")]
     public async Task ProfileSettingsWithoutProfileAreRejected(string option, string value)
     {
         var command = GetRequiredService<RunCommand>();

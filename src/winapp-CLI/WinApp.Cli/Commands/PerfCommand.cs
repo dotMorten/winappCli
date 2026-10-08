@@ -39,7 +39,7 @@ internal sealed class PerfCommand : Command, IShortDescription
             var resolved = await targetResolver.ResolveAsync(parse.GetRequiredValue(app), null, token);
             using var target = Process.GetProcessById(resolved.ProcessId);
             var identity = PerfProcessIdentity.Read(target);
-            var registration = await service.PrepareAsync(parse.GetRequiredValue(output), parse.GetValue(duration), parse.GetValue(size), token);
+            var registration = await service.PrepareAsync(parse.GetRequiredValue(output), parse.GetValue(duration), parse.GetValue(size), PerfProfileModes.Attach, token);
             var capture = await PerfCaptureService.BindAsync(registration, identity, "attached; startup not recorded", false, token);
             PrintCapture(capture, parse.GetValue(WinAppRootCommand.JsonOption), console, "start");
             return 0;

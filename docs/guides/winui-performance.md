@@ -23,7 +23,7 @@ The final buffered events or loss counters may be unavailable after process exit
 so coverage can still be partial. Stop explicitly before closing the app when
 preserving the final moments is important.
 
-For startup coverage and launch failures, see [Record startup layout](#record-startup-layout).
+For startup coverage, see [Record startup layout](#record-startup-layout).
 `--no-launch` cannot be combined with `--profile`.
 Existing `run` restrictions still apply; for example,
 `--debug-output` cannot be combined with `--detach` or `--json`. Debugger pauses
@@ -77,32 +77,34 @@ and move captures only after stopping them.
 ## Record startup layout
 
 ```powershell
-winapp run . --profile .\traces\startup --detach --json
+winapp run . --profile .\traces\startup --profile-mode elevated --detach --json
 ```
 
-For a new process, `winapp` pauses before the executable entry point, enables
-the recording providers, then resumes the app. This covers initial WinUI
-initialization, XAML parsing, and layout without adding sleeps, replacing a
-generated `Main`, or changing the executable on disk. Unpackaged launches,
-packaged activation, and execution aliases use this startup gate.
+By default, `run --profile` starts recording just after the app launches, so
+early WinUI initialization, XAML parsing, and first layout can be missed.
+`Profile.StartupCoverage` reports `post-launch attachment; early startup may be
+missing`. That is fine for scenarios that happen after launch, such as
+navigation or scrolling.
 
-Coverage begins before the executable entry point, not before Windows loads the
-process. Earlier DLL initialization and thread-local-storage (TLS) callbacks
-are not recorded. Check `Profile.StartupCoverage` in the launch result and the
-analysis coverage instead of assuming every startup operation was captured.
+To record startup, add `--profile-mode elevated`. Windows shows one
+administrator approval (UAC) prompt for the recorder; your app still runs
+unelevated under your account. The recording starts before launch and
+`Profile.StartupCoverage` reports `recorded from launch (elevated session)`.
+Do not add startup delays or replace a generated `Main` to capture startup.
+
+Elevated recording is limited to the launched app's package (packaged apps) or
+executable name (unpackaged apps), and analysis keeps only the launched process.
+Other instances of the same app that run during the recording also count
+toward `--profile-max-size-mib`. If the UAC prompt is declined, `run` fails
+before launching; rerun without `--profile-mode elevated` to record after launch.
+
 If activation reuses an existing process, coverage is labeled
 `attached-to-existing; startup not recorded`. Close that instance before
 launching when you need its startup.
 
-On ARM64 Windows, use the ARM64 winapp CLI for `run --profile`, including when
-profiling an emulated x64 app. An emulated x64 CLI rejects startup profiling
-before building or launching. You can still launch normally and use
-`perf start --app <pid>` to record an existing app.
-
-If startup recording cannot become ready, the new paused process is terminated
-and `run` reports failure rather than letting startup proceed without recording.
-Launch without `--profile`, then use `perf start --app <pid>` to record a later
-scenario. Do not modify app code to work around a recording failure.
+If an elevated recorder is terminated unexpectedly, its recording keeps running
+until its size limit, the next elevated recording, or until you stop it from an
+administrator terminal with `logman stop WinApp-Perf-<capture-id> -ets`.
 
 ## Analyze the recording
 
@@ -328,7 +330,7 @@ does not sanitize the raw files.
 |---|---|
 | No usable events | Verify the real WinUI app PID, record again, and exercise navigation or scrolling while recording |
 | Runtime not observed | Confirm the target loads `Microsoft.UI.Xaml.dll`; a launcher, non-WinUI app, or already-exited process is not a supported target |
-| Native access error | Use an app running under your own account and inspect the native error; winapp does not elevate or change tracing permissions |
+| Native access error | Use an app running under your own account and inspect the native error; winapp elevates only the startup recorder, and only with `run --profile-mode elevated` |
 | Unsupported descriptors or payloads | Keep the ETL and runtime version for investigation; unsupported events are not decoded using an unrelated installed manifest |
 | Partial tail after app exit | Recording is finalized normally; analyze the retained events. For more reliable final-moment coverage, stop recording before closing the app |
 | Loss or file cap | Use a shorter focused scenario; target-resident private buffers may be lost at exit |

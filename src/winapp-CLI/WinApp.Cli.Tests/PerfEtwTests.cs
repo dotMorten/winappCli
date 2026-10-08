@@ -18,6 +18,10 @@ namespace WinApp.Cli.Tests;
 [DoNotParallelize]
 public sealed class PerfEtwTests
 {
+    private static readonly uint[] PidAndEventIdFilters = [0x80000004u, 0x80000200u];
+    private static readonly uint[] PackageAndEventIdFilters = [0x80000010u, 0x80000200u];
+    private static readonly uint[] ExecutableFilterOnly = [0x80000008u];
+
     [TestMethod]
     public void XamlProviderCapturesParserAppModelAndImageKeywords()
     {
@@ -60,6 +64,54 @@ public sealed class PerfEtwTests
     }
 
     [TestMethod]
+    public void PidScopeStartsPrivateSessionWithPidFilter()
+    {
+        var api = new FakeEtwApi { StartedHandle = 123 };
+        using var trace = new PrivateEtwSession("owned", Guid.NewGuid(), Environment.ProcessId, @"C:\trace.etl", 1, api);
+        Assert.AreEqual(0x801u, api.StartedLogFileMode);
+        Assert.AreEqual(1u, api.StartedFilterCount);
+        trace.Enable(Guid.NewGuid(), ulong.MaxValue, eventIds: [1, 2]);
+        CollectionAssert.AreEqual(PidAndEventIdFilters, api.EnabledFilterTypes.Single());
+    }
+
+    [TestMethod]
+    public void PackageScopeStartsNormalSessionAndFiltersAtEnable()
+    {
+        var api = new FakeEtwApi { StartedHandle = 123 };
+        using var trace = new PrivateEtwSession("owned", Guid.NewGuid(),
+            new PerfEtwScope(PackageFullName: "Contoso.App_1.0.0.0_x64__abc"), @"C:\trace.etl", 1, api);
+        Assert.AreEqual(1u, api.StartedLogFileMode);
+        Assert.AreEqual(0u, api.StartedFilterCount);
+        trace.Enable(Guid.NewGuid(), ulong.MaxValue, eventIds: [1]);
+        CollectionAssert.AreEqual(PackageAndEventIdFilters, api.EnabledFilterTypes.Single());
+        Assert.AreEqual("Contoso.App_1.0.0.0_x64__abc", api.EnabledScopeName);
+    }
+
+    [TestMethod]
+    public void ExecutableScopeKeepsNameFilterWhenEventIdsAreRejected()
+    {
+        var api = new FakeEtwApi { StartedHandle = 123, RejectEventIds = true };
+        using var trace = new PrivateEtwSession("owned", Guid.NewGuid(),
+            new PerfEtwScope(ExecutableName: "app.exe"), @"C:\trace.etl", 1, api);
+        Assert.IsFalse(trace.Enable(Guid.NewGuid(), ulong.MaxValue, eventIds: [1]));
+        Assert.AreEqual(2, api.EnableCalls);
+        CollectionAssert.AreEqual(ExecutableFilterOnly, api.EnabledFilterTypes[1]);
+        Assert.AreEqual("app.exe", api.EnabledScopeName);
+    }
+
+    [TestMethod]
+    public void EmptyScopeStartsUnfilteredNormalSession()
+    {
+        var api = new FakeEtwApi { StartedHandle = 123 };
+        using var trace = new PrivateEtwSession("owned", Guid.NewGuid(), new PerfEtwScope(), @"C:\trace.etl", 1, api);
+        Assert.AreEqual(1u, api.StartedLogFileMode);
+        trace.Enable(Guid.NewGuid(), ulong.MaxValue);
+        Assert.IsEmpty(api.EnabledFilterTypes.Single());
+        Assert.Throws<ArgumentException>(() => new PrivateEtwSession("owned", Guid.NewGuid(),
+            new PerfEtwScope(ExecutableName: new string('a', 600)), @"C:\trace.etl", 1, api));
+    }
+
+    [TestMethod]
     public void FailedStopOfZeroSessionHandleRemainsRetryable()
     {
         var api = new FakeEtwApi { FailStop = true };
@@ -85,9 +137,16 @@ public sealed class PerfEtwTests
         public ulong StartedHandle { get; set; }
         public bool FailClr { get; set; }
         public bool RejectEventIds { get; set; }
+        public uint StartedLogFileMode { get; private set; }
+        public uint StartedFilterCount { get; private set; }
+        public List<uint[]> EnabledFilterTypes { get; } = [];
+        public string? EnabledScopeName { get; private set; }
 
         public NativeError Start(ulong* handle, char* name, Etw.EVENT_TRACE_PROPERTIES* properties)
         {
+            var v2 = (Etw.EVENT_TRACE_PROPERTIES_V2*)properties;
+            StartedLogFileMode = v2->LogFileMode;
+            StartedFilterCount = v2->FilterDescCount;
             *handle = StartedHandle;
             return NativeError.ERROR_SUCCESS;
         }
@@ -97,13 +156,24 @@ public sealed class PerfEtwTests
         {
             EnableCalls++;
             EnabledHandle = handle;
-            if (RejectEventIds && parameters->FilterDescCount == 2)
+            var types = new uint[parameters->FilterDescCount];
+            for (var i = 0; i < types.Length; i++)
+            {
+                types[i] = parameters->EnableFilterDesc[i].Type;
+            }
+            EnabledFilterTypes.Add(types);
+            if (types.Length > 0 && types[0] is 0x80000008u or 0x80000010u)
+            {
+                EnabledScopeName = new string((char*)parameters->EnableFilterDesc[0].Ptr);
+            }
+            if (RejectEventIds && types.Contains(0x80000200u))
             {
                 return NativeError.ERROR_INVALID_PARAMETER;
             }
-            Assert.AreEqual(1u, parameters->FilterDescCount);
-            Assert.AreEqual(0x80000004u, parameters->EnableFilterDesc->Type);
-            Assert.AreEqual((uint)Environment.ProcessId, *(uint*)parameters->EnableFilterDesc->Ptr);
+            if (types.Length > 0 && types[0] == 0x80000004u)
+            {
+                Assert.AreEqual((uint)Environment.ProcessId, *(uint*)parameters->EnableFilterDesc->Ptr);
+            }
             return FailClr && *provider == PerfProviders.Clr ? NativeError.ERROR_ACCESS_DENIED : NativeError.ERROR_SUCCESS;
         }
 

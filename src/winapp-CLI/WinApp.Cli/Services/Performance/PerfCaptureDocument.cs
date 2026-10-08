@@ -45,6 +45,7 @@ internal sealed class PerfCaptureDocument
     public string? LastControlError { get; set; }
     public string? StopReason { get; set; }
     public string StartupCoverage { get; set; } = "attached; startup not recorded";
+    public string Mode { get; set; } = PerfProfileModes.Attach;
     public bool DebuggerAttached { get; set; }
     public int DurationSec { get; set; } = 30;
     public int MaxSizeMiB { get; set; } = 512;
@@ -124,11 +125,21 @@ internal static class PerfProviders
     ];
 }
 
+internal static class PerfProfileModes
+{
+    /// <summary>Attaches a private session to the launched process; no elevation, startup may be missed.</summary>
+    public const string Attach = "attach";
+    /// <summary>Starts an elevated session before launch so startup is recorded.</summary>
+    public const string Elevated = "elevated";
+}
+
 internal sealed record PerfControlRequest(string Credential, string Operation,
-    PerfProcessIdentity? Target = null, string? Name = null, string? StartupCoverage = null, bool DebuggerAttached = false);
+    PerfProcessIdentity? Target = null, string? Name = null, string? StartupCoverage = null, bool DebuggerAttached = false,
+    PerfEtwScope? Scope = null);
 internal sealed record PerfControlResponse(PerfCaptureDocument? Capture, string? Error = null);
 internal sealed record PerfControlRegistration(string Id, string Directory, string Credential,
-    Guid SessionId, int DurationSec, int MaxSizeMiB, PerfProcessIdentity? Worker = null, PerfProcessIdentity? Target = null);
+    Guid SessionId, int DurationSec, int MaxSizeMiB, PerfProcessIdentity? Worker = null, PerfProcessIdentity? Target = null,
+    string Mode = PerfProfileModes.Attach);
 internal sealed record PerfCommandError(string Code, string Message, bool PartialOutput);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
@@ -137,7 +148,6 @@ internal sealed record PerfCommandError(string Code, string Message, bool Partia
 [JsonSerializable(typeof(PerfControlRequest))]
 [JsonSerializable(typeof(PerfControlResponse))]
 [JsonSerializable(typeof(PerfControlRegistration))]
-[JsonSerializable(typeof(PerfStartupRegistration))]
 [JsonSerializable(typeof(PerfEvent))]
 [JsonSerializable(typeof(PerfCall))]
 [JsonSerializable(typeof(PerfGcInterval))]

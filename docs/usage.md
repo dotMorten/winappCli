@@ -699,6 +699,7 @@ winapp manifest update-assets mylogo.png --verbose
 ### run
 
 To record native WinUI performance while launching, add `--profile <empty-directory>`.
+Add `--profile-mode elevated` to record startup (one UAC prompt for the recorder).
 See the [performance guide](guides/winui-performance.md) for duration/size options,
 startup coverage, detached capture, and offline analysis.
 
