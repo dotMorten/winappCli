@@ -70,6 +70,20 @@ internal static class PerfStartupGate
         paused.Resume();
     }
 
+    /// <summary>Releases the activation hold on a package process without debugging it.</summary>
+    public static void ResumeActivation(int pid, uint threadId)
+    {
+        using var thread = PInvoke.OpenThread_SafeHandle(
+            THREAD_ACCESS_RIGHTS.THREAD_SUSPEND_RESUME | THREAD_ACCESS_RIGHTS.THREAD_QUERY_LIMITED_INFORMATION,
+            false, threadId);
+        if (thread.IsInvalid) { throw NativeFailure("Open activation thread"); }
+        if (PInvoke.GetProcessIdOfThread(thread) != checked((uint)pid))
+        {
+            throw new InvalidOperationException("The activation thread does not belong to the launched process.");
+        }
+        Check(PInvoke.ResumeThread(thread) != uint.MaxValue, "Resume package activation");
+    }
+
     private static unsafe PausedProcess CreatePaused(string executable, string? arguments,
         string? workingDirectory, LaunchStdioMode stdio, CancellationToken token)
     {
