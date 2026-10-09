@@ -41,6 +41,9 @@ description: Investigate slow WinUI 3 layout, scrolling and virtualization using
    For overall resource cost, use `--view resources` over the same marker range;
    see the guide's
    [process counters](https://github.com/microsoft/WinAppCli/blob/main/docs/guides/winui-performance.md#compare-process-resource-cost).
+   For app-side composition, query `--view calls --family composition` and
+   `--view events --event DCompDeviceCommit` over the same marker range; see
+   [composition submission](https://github.com/microsoft/WinAppCli/blob/main/docs/guides/winui-performance.md#separate-xaml-work-from-composition-submission).
 7. Report observed cost, supporting event IDs, coverage gaps, and one concrete next
    experiment. Preserve stdout when partial results accompany a nonzero exit code.
 
@@ -61,6 +64,9 @@ description: Investigate slow WinUI 3 layout, scrolling and virtualization using
   modules, or waits. Sampled memory/thread maxima can miss brief spikes; missing
   samples are not zero resource use.
 - Trace-local element IDs are not UI Automation selectors.
+- Composition calls are elapsed API scopes, not GPU work or display latency.
+  DComp device commits are notifications, not timed or displayed frames; check
+  `directCompositionProvider` before interpreting missing events.
 - Call trees are instrumented operation scopes, not CPU stacks or visual trees.
   Keep exclusive scope time distinct from element self time.
 - GC is requested by default but may be unavailable. Check `gcCoverage` separately;

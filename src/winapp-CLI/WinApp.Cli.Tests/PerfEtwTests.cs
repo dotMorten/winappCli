@@ -308,6 +308,7 @@ public sealed class PerfEtwTests
         public bool FailStop { get; set; }
         public ulong StartedHandle { get; set; }
         public bool FailClr { get; set; }
+        public bool FailComposition { get; set; }
         public bool RejectEventIds { get; set; }
         public Action? BeforeStop { get; set; }
         public uint StartedLogFileMode { get; private set; }
@@ -348,7 +349,8 @@ public sealed class PerfEtwTests
             {
                 Assert.AreEqual((uint)Environment.ProcessId, *(uint*)parameters->EnableFilterDesc->Ptr);
             }
-            return FailClr && *provider == PerfProviders.Clr ? NativeError.ERROR_ACCESS_DENIED : NativeError.ERROR_SUCCESS;
+            return FailClr && *provider == PerfProviders.Clr || FailComposition && *provider == PerfProviders.DirectComposition
+                ? NativeError.ERROR_ACCESS_DENIED : NativeError.ERROR_SUCCESS;
         }
 
         public NativeError Stop(ulong handle, char* name, Etw.EVENT_TRACE_PROPERTIES* properties)
@@ -363,12 +365,18 @@ public sealed class PerfEtwTests
     }
 
         [TestMethod]
-        public void OptionalGcFailurePreservesTheOwnedXamlSessionAndError()
+        [DataRow(false)]
+        [DataRow(true)]
+        public void OptionalProviderFailurePreservesTheOwnedXamlSessionAndError(bool composition)
         {
-            var api = new FakeEtwApi { StartedHandle = 123, RejectEventIds = true, FailClr = true };
+            var api = new FakeEtwApi
+            {
+                StartedHandle = 123, RejectEventIds = true, FailClr = !composition, FailComposition = composition,
+            };
             using var trace = new PrivateEtwSession("owned", Guid.NewGuid(), Environment.ProcessId, @"C:\trace.etl", 1, api);
             var xaml = PerfCaptureWorker.EnableProvider(trace, PerfProviders.All.Single(p => p.Id == PerfProviders.Xaml));
-            var gc = PerfCaptureWorker.EnableProvider(trace, PerfProviders.All.Single(p => p.Id == PerfProviders.Clr));
+            var gc = PerfCaptureWorker.EnableProvider(trace, PerfProviders.All.Single(p =>
+                p.Id == (composition ? PerfProviders.DirectComposition : PerfProviders.Clr)));
             Assert.AreEqual("enabled", xaml.State);
             Assert.AreEqual("unavailable", gc.State);
             Assert.IsNotNull(gc.Error);

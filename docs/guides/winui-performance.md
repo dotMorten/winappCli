@@ -140,6 +140,7 @@ include the structured `limitations` field.
 | Parsing | Timed XAML parsing and component-loading scopes |
 | Layout | Template application, measure, arrange, and related timed layout scopes |
 | Render | Concrete UI-thread render-walk and frame-submission scopes; the enclosing frame is not counted as rendering |
+| Composition submission | Main-device commit and DComp surface-update calls on the selected UI thread; not GPU execution or display latency |
 | Other observed XAML | Other timed XAML framework, input, scrolling, virtualization, and initialization work |
 | Image decode/load | Timed image work on the selected UI thread; off-thread decode does not contribute |
 | Unclassified | The remaining selected-range time, including idle, waits, and uninstrumented work |
@@ -326,6 +327,45 @@ attempts appear as `failedSamples` and `lastError`, without discarding the ETW
 recording. A resource query returns retained samples with a nonzero exit status
 when sampling failures occurred; keep stdout and inspect `coverage.reasons`.
 
+## Separate XAML work from composition submission
+
+```powershell
+winapp perf analyze .\traces\scroll --view calls --family composition --from-marker scenario-start --to-marker scenario-end --json
+winapp perf analyze .\traces\scroll --view events --event DCompDeviceCommit --from-marker scenario-start --to-marker scenario-end --json
+```
+
+`CommitMainDevice` measures elapsed time inside WinUI's main composition-device
+commit call. Compare it with layout and render-walk timings; the default report
+separates **Composition submission** from **Render** on the selected UI thread.
+These scopes can nest, so their inclusive totals must not be added together.
+
+New captures also request optional DirectComposition events:
+
+| Evidence | What it tells you |
+|---|---|
+| `DCompBeginDraw` | Elapsed time entering a surface update; start-event fields identify the resource and update rectangle |
+| `DCompEndDraw` | Elapsed time finishing a surface update |
+| `DCompUpdateToken` | Elapsed time updating the surface token |
+| `DCompDeviceCommit` | A notification containing device/channel IDs and the last committed/confirmed batch IDs; it has no inferred duration |
+
+The calls view includes all target-process threads unless you add `--thread`.
+Use `--view call --id <call-id>` to inspect a timed operation and `--view events
+--event <event-id>` to inspect its referenced start/end evidence. Resource/device
+IDs are trace-local identifiers, not XAML elements or UI Automation selectors.
+
+Both attach and elevated captures request the same app-side composition evidence.
+The query's `directCompositionProvider` reports whether that optional provider
+was enabled, unavailable, unconfirmed, or not recorded; text summaries also show
+its status. If unavailable, inspect its error and retain the XAML results.
+Missing events are not zero composition cost. Older recordings can reveal
+`CommitMainDevice` when the XAML events are already present, but cannot gain
+DirectComposition events that were never recorded.
+
+These timings include any waits inside the calls, not just CPU execution.
+Neither a returned commit call nor a confirmed batch establishes when pixels
+reached the display. This does not record DXGI presents, DWM's cross-process
+composition work, GPU execution, displayed FPS, or input-to-display latency.
+
 ## Interpret the evidence
 
 - **Inclusive time** includes nested work. **Exclusive time** subtracts the union
@@ -367,11 +407,11 @@ decoding ETL again; content fingerprints detect changed inputs. If cache integri
 checks fail, remove **only** that capture's `analysis` directory and analyze again.
 
 Recording uses the target PID and native XAML, XAML diagnostics, XAML operational,
-and Controls.Perf providers, plus optional CLR GC events. Controls.Debug, kernel
+and Controls.Perf providers, plus optional CLR GC and DirectComposition events. Controls.Debug, kernel
 tracing, CPU sampling, and EventPipe are not enabled. Where Windows rejects a
 narrower event-ID filter, PID filtering stays enabled and the corresponding
 `providerStates` entry has `eventIdFilterApplied: false`.
-That fallback can record additional informational GC or XAML diagnostics data
+That fallback can record additional informational GC, composition, or XAML diagnostics data
 and increase overhead.
 
 Raw ETL and metadata can contain names, source paths, URIs, resource keys, and
@@ -388,3 +428,4 @@ does not sanitize the raw files.
 | Loss or file cap | Use a shorter focused scenario; target-resident private buffers may be lost at exit |
 | Analysis resource limit | Capture a smaller scenario; the report marks incomplete evidence rather than truncating the raw ETL |
 | GC unavailable or not observed | Inspect `providerStates`, `managedRuntimes` and `gcCoverage`; preserve XAML results, and do not conclude that no GC occurred |
+| Composition unavailable or not observed | Inspect `directCompositionProvider` and its error; retain XAML evidence and do not infer zero composition or presentation cost |

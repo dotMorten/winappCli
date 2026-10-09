@@ -192,6 +192,48 @@ public class PerfCommandTests : BaseCommandTests
     }
 
     [TestMethod]
+    public async Task CompositionCallsAndCommitNotificationsHaveDistinctJsonAndTextEvidence()
+    {
+        var commit = new PerfEvent("device-commit", 15, 15, 7, PerfProviders.DirectComposition,
+            25, 0, 0, Guid.Empty, "DCompDeviceCommit", "composition", "info", null,
+            new() { ["DeviceId"] = "0000000000001234", ["LastCommittedBatchId"] = "9", ["LastConfirmedBatchId"] = "7" });
+        var directory = CreateCachedAnalysis(
+            [new("commit", "CommitMainDevice", "composition", 7, null, null, "begin", "end",
+                10, 15, 5, null, "complete", 5)],
+            events: [commit], compositionState: new(PerfProviders.DirectComposition, "enabled", false));
+        try
+        {
+            var (stdout, stderr, code) = await InvokeProgramAsync(
+                ["perf", "analyze", directory.FullName, "--view", "calls", "--family", "composition", "--json"]);
+            Assert.AreEqual(0, code, stderr);
+            using (var calls = JsonDocument.Parse(stdout))
+            {
+                Assert.AreEqual(1, calls.RootElement.GetProperty("rows").GetArrayLength());
+                Assert.AreEqual(5, calls.RootElement.GetProperty("rows")[0].GetProperty("call").GetProperty("durationMs").GetDouble());
+                Assert.AreEqual("enabled", calls.RootElement.GetProperty("directCompositionProvider").GetProperty("state").GetString());
+            }
+            (stdout, stderr, code) = await InvokeProgramAsync(
+                ["perf", "analyze", directory.FullName, "--view", "events", "--event", "DCompDeviceCommit", "--json"]);
+            Assert.AreEqual(0, code, stderr);
+            using (var events = JsonDocument.Parse(stdout))
+            {
+                var notification = events.RootElement.GetProperty("rows")[0].GetProperty("event");
+                Assert.AreEqual("info", notification.GetProperty("phase").GetString());
+                Assert.AreEqual("9", notification.GetProperty("fields").GetProperty("LastCommittedBatchId").GetString());
+            }
+            Assert.AreEqual(0, await ParseAndInvokeWithCaptureAsync(GetRequiredService<PerfCommand>(),
+                ["analyze", directory.FullName]));
+            StringAssert.Contains(TestAnsiConsole.Output, "Composition submission");
+            StringAssert.Contains(TestAnsiConsole.Output, "CommitMainDevice");
+            StringAssert.Contains(TestAnsiConsole.Output, "DirectComposition provider: enabled");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
     [DataRow("--app", "1234")]
     [DataRow("--app", "WinUIBenchmarkApp")]
     [DataRow("--app", "Benchmark")]
@@ -724,7 +766,8 @@ public class PerfCommandTests : BaseCommandTests
         IEnumerable<PerfCall> calls,
         IEnumerable<PerfEvent>? events = null,
         IEnumerable<PerfElement>? elements = null,
-        PerfProcessResources? resources = null)
+        PerfProcessResources? resources = null,
+        PerfProviderState? compositionState = null)
     {
         var directory = Directory.CreateTempSubdirectory("WinApp-Perf-Console-");
         File.WriteAllBytes(Path.Join(directory.FullName, "trace.etl"), []);
@@ -744,7 +787,9 @@ public class PerfCommandTests : BaseCommandTests
             EventsLost = 0,
             BuffersLost = 0,
             TraceFiles = ["trace.etl"],
-            Providers = PerfProviders.All.Where(provider => provider.Id == PerfProviders.Xaml).ToArray(),
+            Providers = PerfProviders.All.Where(provider => provider.Id == PerfProviders.Xaml ||
+                compositionState is not null && provider.Id == PerfProviders.DirectComposition).ToArray(),
+            ProviderStates = compositionState is null ? [] : [compositionState],
         };
         capture.Save();
 

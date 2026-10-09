@@ -83,6 +83,7 @@ internal sealed class PerfQueryResult
     public string? RootCallId { get; init; }
     public PerfGcCoverage? GcCoverage { get; init; }
     public PerfResourceSummary? ProcessResources { get; init; }
+    public PerfProviderState? DirectCompositionProvider { get; init; }
     public uint? PrimaryUiThread { get; init; }
     public List<PerfActivityRow>? Activity { get; init; }
     public List<PerfParsingResource>? ParsingResources { get; init; }
@@ -92,7 +93,7 @@ internal sealed class PerfQueryResult
     public string[] Limitations { get; set; } =
     [
         "Durations and self time are elapsed time, not CPU time. Inclusive totals overlap.",
-        "Frames are UI-side phases, not presented frames or FPS. Temporal proximity is not causation.",
+        "Frames are UI-side phases, not presented frames or FPS. Composition scopes measure app-side API elapsed time; device commits are notifications, not display completion. Temporal proximity is not causation.",
         "Missing layout during compositor scrolling is inconclusive. CPU stacks, kernel waits and GPU are not recorded.",
         "Process counters cover the bound process, not children; CPU deltas span observed samples only. One-second sampling can miss spikes and final counters after exit. Memory is not allocation attribution.",
         "Element IDs and addresses are trace-local; parents/source are observed metadata, not a complete visual tree or UIA mapping.",
@@ -401,6 +402,11 @@ internal static class PerfQuery
             NextOffset = (long)options.Offset + options.Limit < rows.Count ? options.Offset + options.Limit : null,
             PrimaryUiThread = primaryUiThread,
             ProcessResources = options.View == "summary" ? PerfResourceSummary.Create(analysis.Capture, range) : null,
+            DirectCompositionProvider = analysis.Capture.Providers.Any(p => p.Id == PerfProviders.DirectComposition)
+                ? analysis.Capture.ProviderStates.FirstOrDefault(p => p.Id == PerfProviders.DirectComposition) is { } compositionState
+                    ? compositionState with { Error = Clip(compositionState.Error, 256) }
+                    : new(PerfProviders.DirectComposition, "unconfirmed", null)
+                : new(PerfProviders.DirectComposition, "not-recorded", null),
             Activity = options.View == "summary" ? activity!.Categories : null,
             ParsingResources = options.View == "summary" ? activity!.Resources.Take(10).ToList() : null,
             ParsingResourcesTotal = options.View == "summary" ? activity!.Resources.Count : null,
@@ -479,7 +485,8 @@ internal static class PerfQuery
         if (requested is { } thread)
         {
             if (!complete.Any(call => call.Thread == thread &&
-                (call.Name == "Frame" && call.Family == "frames" || Category(call) is not null)))
+                (call.Name == "Frame" && call.Family == "frames" ||
+                    Category(call) is not null && (call.Family != "composition" || call.Name == "CommitMainDevice"))))
             {
                 throw new ArgumentException($"Thread {thread} has no complete WinUI activity in the selected range.");
             }
@@ -502,7 +509,8 @@ internal static class PerfQuery
         {
             return frameThread.Thread;
         }
-        var activityThread = complete.Where(call => Category(call) is not null and not "Image decode/load")
+        var activityThread = complete.Where(call => Category(call) is not null and not "Image decode/load" &&
+                (call.Family != "composition" || call.Name == "CommitMainDevice"))
             .GroupBy(call => call.Thread)
             .Select(group => new
             {
@@ -640,13 +648,14 @@ internal static class PerfQuery
     }
 
     private static readonly string[] ActivityCategories =
-        ["Parsing", "Layout", "Render", "Other observed XAML", "Image decode/load"];
+        ["Parsing", "Layout", "Render", "Composition submission", "Other observed XAML", "Image decode/load"];
 
     private static string? Category(PerfCall call) => call.Family switch
     {
         "parsing" => "Parsing",
         "layout" => "Layout",
         "images" => "Image decode/load",
+        "composition" => "Composition submission",
         "frames" when call.Name is "RenderWalk" or "SubmitFrame" => "Render",
         "frames" when call.Name == "Frame" => null,
         "gc" or "metadata" or "unknown" => null,
@@ -658,6 +667,7 @@ internal static class PerfQuery
         "Parsing" => 6,
         "Layout" => 5,
         "Render" => 4,
+        "Composition submission" => 4,
         "Image decode/load" => 3,
         _ => 1,
     };

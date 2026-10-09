@@ -12,10 +12,10 @@ namespace WinApp.Cli.Commands;
 
 internal sealed class PerfCommand : Command, IShortDescription
 {
-    public string ShortDescription => "Record WinUI timings, managed GC context, and process resource counters";
+    public string ShortDescription => "Record WinUI and composition timings, GC context, and process counters";
 
     public PerfCommand(PerfCaptureService service, IUiTargetResolver targetResolver, IAnsiConsole console)
-        : base("perf", "Record PID-scoped WinUI 3 ETW and process resource counters without elevation, then query compact offline performance evidence. Raw ETL can contain app data; WinUI elapsed timings are not CPU/GPU measurements.")
+        : base("perf", "Record PID-scoped WinUI 3 ETW, app-side composition activity, and process resource counters without elevation, then query compact offline performance evidence. Raw ETL can contain app data; elapsed timings are not CPU/GPU measurements or display latency.")
     {
         Options.Add(WinAppRootCommand.JsonOption);
         SetAction(parse =>
@@ -95,7 +95,7 @@ internal sealed class PerfCommand : Command, IShortDescription
         var eventFilter = new Option<string?>("--event") { Description = "Exact event name or evidence ID for the events view." };
         var sort = new Option<string>("--sort") { Description = "Ranking: self, inclusive, or count for summary/elements; duration for gc.", DefaultValueFactory = _ => "self" };
         var depth = new Option<int?>("--depth") { Description = "Expansion depth, 0-4. Defaults: call 2, element 0. Call trees show instrumented operations, not CPU stacks." };
-        var family = new Option<string?>("--family") { Description = "Exact operation family for --view calls, for example layout, frames, input, or initialization." };
+        var family = new Option<string?>("--family") { Description = "Exact operation family for --view calls, for example layout, frames, composition, input, or initialization." };
         var minFrameMs = new Option<double?>("--min-frame-ms") { Description = "Minimum complete Frame duration for --view hotspots. Default: 16.67 ms." };
         analyze.Arguments.Add(directory);
         foreach (var option in new Option[] { view, limit, offset, maxBytes, from, to, fromMarker, toMarker,
@@ -132,6 +132,12 @@ internal sealed class PerfCommand : Command, IShortDescription
                     ? $", primary UI thread {primaryThread}"
                     : "";
                 console.MarkupLineInterpolated($"[dim]Capture {result.CaptureId}: {result.View}{threadDescription}, {result.Range.FromMs:F2}-{result.Range.ToMs:F2} ms[/]");
+                if (result.DirectCompositionProvider is { } composition &&
+                    (options.View == "summary" || options.Family == "composition" ||
+                        options.Provider is not null && Guid.Parse(options.Provider) == PerfProviders.DirectComposition))
+                {
+                    console.WriteLine($"DirectComposition provider: {composition.State}. {composition.Error}");
+                }
                 if (result.ProcessResources is { } processResources)
                 {
                     PrintResources(console, processResources);

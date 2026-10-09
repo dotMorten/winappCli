@@ -194,6 +194,14 @@ test('operation trees and GC queries preserve bounded analysis arguments', async
   assert.equal(state.calls[2][state.calls[2].indexOf('--from-ms') + 1], '500');
 });
 
+test('composition queries keep timed calls separate from device-commit notifications', async () => {
+  const state = captureSpawnArgs();
+  await perfAnalyze({ directory: 'trace', view: 'calls', family: 'composition', json: true });
+  await perfAnalyze({ directory: 'trace', view: 'events', event: 'DCompDeviceCommit', json: true });
+  assert.equal(state.calls[0][state.calls[0].indexOf('--family') + 1], 'composition');
+  assert.equal(state.calls[1][state.calls[1].indexOf('--event') + 1], 'DCompDeviceCommit');
+});
+
 test('process resource queries preserve marker bounds and paging', async () => {
   const state = captureSpawnArgs();
   await perfAnalyze({

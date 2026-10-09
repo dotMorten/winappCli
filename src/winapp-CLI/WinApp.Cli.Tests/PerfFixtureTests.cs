@@ -102,6 +102,14 @@ public sealed class PerfFixtureTests
                 var rebuiltResult = PerfQuery.Execute(rebuilt, new(View: "gc", Limit: 100));
                 Assert.AreEqual(JsonSerializer.Serialize(result, PerfJsonContext.Default.PerfQueryResult),
                     JsonSerializer.Serialize(rebuiltResult, PerfJsonContext.Default.PerfQueryResult));
+                rebuilt.Manifest.DecoderVersion = 0;
+                File.WriteAllText(Path.Join(rebuilt.Directory, "manifest.json"),
+                    JsonSerializer.Serialize(rebuilt.Manifest, PerfJsonContext.Default.PerfAnalysisManifest));
+                var redecoded = PerfAnalysisStore.Open(gcCapture.FullName, gcTimeout.Token);
+                Assert.AreEqual(1, redecoded.Manifest.DecoderVersion);
+                Assert.AreEqual(JsonSerializer.Serialize(result, PerfJsonContext.Default.PerfQueryResult),
+                    JsonSerializer.Serialize(PerfQuery.Execute(redecoded, new(View: "gc", Limit: 100)),
+                        PerfJsonContext.Default.PerfQueryResult));
             }
             finally
             {

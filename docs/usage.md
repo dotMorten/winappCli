@@ -2199,7 +2199,8 @@ Record and query WinUI 3 layout, frame, input and scrolling evidence. Stop the
 capture before analysis. The default analysis reports mutually exclusive observed
 activity on the primary UI thread, the hottest parsed XAML resources, and a
 detailed operation ranking. Process resources are summarized alongside timings;
-use `--view resources` for their timeline. Use marker or millisecond bounds for before/after
+use `--view resources` for their timeline. Use `--view calls --family composition`
+for app-side commit and surface-update timings. Use marker or millisecond bounds for before/after
 comparisons. See the [performance guide](guides/winui-performance.md) for the
 complete start/mark/stop/query workflow and interpretation limits.
 
