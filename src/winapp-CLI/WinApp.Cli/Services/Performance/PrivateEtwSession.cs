@@ -298,8 +298,18 @@ internal sealed unsafe class PrivateEtwSession : IDisposable
 
     public void Dispose()
     {
-        Stop();
-        Free();
+        try
+        {
+            Stop();
+        }
+        catch (Win32Exception)
+        {
+            // The failure was already reported by the explicit Stop; disposal must still release memory.
+        }
+        finally
+        {
+            Free();
+        }
     }
 }
 

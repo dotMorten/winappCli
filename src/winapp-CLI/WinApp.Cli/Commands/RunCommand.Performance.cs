@@ -120,6 +120,25 @@ internal partial class RunCommand
             }
         }
 
+        /// <summary>Scopes an elevated capture to the current user's registration of the package.</summary>
+        private Task PreparePackageProfileAsync(string? packageFamilyName, CancellationToken token)
+        {
+            if (profileRun is not { Elevated: true } || string.IsNullOrEmpty(packageFamilyName))
+            {
+                return PrepareProfileAsync(new(), token);
+            }
+            string? fullName = null;
+            try
+            {
+                fullName = appLauncherService.GetRegisteredPackageOrThrow(packageFamilyName)?.FullName;
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug("Could not resolve package {Family} for the capture scope: {Message}", packageFamilyName, ex.Message);
+            }
+            return PrepareProfileAsync(new(PackageFullName: fullName), token);
+        }
+
         private async Task BindProfileAsync(uint pid, DateTime launchedAfter, CancellationToken token)
         {
             if (profileRun is null)

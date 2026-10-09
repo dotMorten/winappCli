@@ -72,6 +72,20 @@ public class PerfCommandTests : BaseCommandTests
     }
 
     [TestMethod]
+    public void MarkOutputOmitsCaptureWarnings()
+    {
+        var capture = new PerfCaptureDocument
+        {
+            Id = "capture-id", Directory = @"C:\capture", SessionName = "test", State = "recording",
+            Warnings = ["Event filtering unavailable."],
+        };
+
+        PerfCommand.PrintCapture(capture, false, TestAnsiConsole, "mark", "scenario-start");
+
+        Assert.AreEqual("Added mark scenario-start\n", TestAnsiConsole.Output.Replace("\r\n", "\n"));
+    }
+
+    [TestMethod]
     [DataRow("start")]
     [DataRow("mark")]
     [DataRow("stop")]

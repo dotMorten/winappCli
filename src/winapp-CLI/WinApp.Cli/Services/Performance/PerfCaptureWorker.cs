@@ -411,7 +411,16 @@ internal sealed class PerfCaptureWorker : IDisposable
         capture.State = "stopping";
         capture.StopReason = reason;
         capture.Save();
-        session?.Stop();
+        try
+        {
+            session?.Stop();
+        }
+        catch (Win32Exception) when (session is { Stopped: false } && TargetExitsSoon())
+        {
+            // A crashing app can stay frozen for error reporting; its private session ends with the process.
+            capture.TargetExited = true;
+            capture.StopReason = "target-exited";
+        }
         capture.StopQpc = Stopwatch.GetTimestamp();
         capture.StoppedUtc = DateTime.UtcNow;
         capture.EventsLost = session?.EventsLost;
@@ -421,6 +430,9 @@ internal sealed class PerfCaptureWorker : IDisposable
         SetFinalState(capture, session?.Stopped == true);
         capture.Save();
     }
+
+    private bool TargetExitsSoon() =>
+        capture.Mode == PerfProfileModes.Attach && target is not null && target.WaitForExit(TimeSpan.FromSeconds(30));
 
     internal static void SetFinalState(PerfCaptureDocument capture, bool sessionStopped)
     {

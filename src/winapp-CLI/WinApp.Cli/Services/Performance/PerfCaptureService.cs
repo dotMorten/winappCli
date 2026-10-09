@@ -87,7 +87,10 @@ internal sealed class PerfCaptureService(IWinappDirectoryService directories, IA
         {
             capture.State = "failed";
             capture.StopReason = "readiness-failed";
-            capture.Error = $"Performance worker readiness failed: {ex.Message}. Any unbound worker has a 30-second shutdown deadline.";
+            // A declined UAC prompt starts no worker, so there is nothing to shut down.
+            capture.Error = ex is ElevationDeclinedException
+                ? ex.Message
+                : $"Performance worker readiness failed: {ex.Message.TrimEnd('.')}. Any unbound worker has a 30-second shutdown deadline.";
             capture.Save();
             throw new InvalidOperationException($"{capture.Error} Capture details: {output.FullName}", ex);
         }
@@ -111,10 +114,13 @@ internal sealed class PerfCaptureService(IWinappDirectoryService directories, IA
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            throw new InvalidOperationException(
-                "Administrator approval was declined. Accept the prompt to record startup, or use --profile-mode attach to record without elevation.", ex);
+            throw new ElevationDeclinedException(ex);
         }
     }
+
+    private sealed class ElevationDeclinedException(Exception inner) : InvalidOperationException(
+        "Administrator approval was declined. Accept the prompt to record startup, or use --profile-mode attach to record without elevation.",
+        inner);
 
     /// <summary>Starts an elevated capture's recording before launch, scoped to the app that is about to start.</summary>
     public static Task<PerfCaptureDocument> ArmAsync(PerfControlRegistration registration, PerfEtwScope scope,

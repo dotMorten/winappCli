@@ -351,6 +351,11 @@ internal sealed class PerfCommand : Command, IShortDescription
                         break;
                 }
             }
+            if (operation == "mark")
+            {
+                // Capture warnings were reported by start and are repeated by status and stop.
+                return;
+            }
             foreach (var warning in capture.Warnings)
             {
                 console.WriteLine(warning);

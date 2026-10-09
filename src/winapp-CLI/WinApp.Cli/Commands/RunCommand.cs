@@ -914,7 +914,7 @@ internal partial class RunCommand : Command, IShortDescription, ITargetAwareComm
 
                     // Step 3: Launch the application using IApplicationActivationManager
                     taskContext.AddDebugMessage($"{UiSymbols.Rocket} Launching application...");
-                    await PrepareProfileAsync(new(PackageFullName: packageFullName), cancellationToken);
+                    await PreparePackageProfileAsync(packageFamilyName, cancellationToken);
                     var launchedAfter = DateTime.UtcNow;
                     processId = appLauncherService.LaunchByAumid(aumid, appArgs);
                     await BindProfileAsync(processId, launchedAfter, cancellationToken);
@@ -1025,7 +1025,7 @@ internal partial class RunCommand : Command, IShortDescription, ITargetAwareComm
                 {
                     try
                     {
-                        await PrepareProfileAsync(new(PackageFullName: packageFullName), cancellationToken);
+                        await PreparePackageProfileAsync(packageFamilyName, cancellationToken);
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
                     {
@@ -1467,7 +1467,7 @@ internal partial class RunCommand : Command, IShortDescription, ITargetAwareComm
 
             try
             {
-                await PrepareProfileAsync(new(PackageFullName: packageFullName), cancellationToken);
+                await PreparePackageProfileAsync(packageFamilyName, cancellationToken);
                 var launchedAfter = DateTime.UtcNow;
                 using var process = ProcessStarter(psi);
                 if (process == null)

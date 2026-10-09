@@ -44,8 +44,9 @@ description: Investigate slow WinUI 3 layout, scrolling and virtualization using
 ## Guardrails
 
 - Use `--profile-mode elevated` only for startup, and tell the user to expect a UAC
-  prompt. Otherwise never elevate, change tracing ACLs, or modify app code to make
-  capture work.
+  prompt. If they decline it, do not retry; fall back to the default attach mode and
+  say that early startup may be missing. Otherwise never elevate, change tracing ACLs,
+  or modify app code to make capture work.
 - Recording is local only. Do not combine `run --profile` with `--on sandbox`;
   see the guide for the supported launch and recording commands.
 - Readiness is not decoded coverage. Missing events are inconclusive.
