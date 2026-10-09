@@ -56,7 +56,13 @@ internal sealed class PerfCaptureWorker : IDisposable
         }
         try
         {
-            using var worker = new PerfCaptureWorker(PerfCaptureService.ReadRegistration(args[1]), args[1], etwApi);
+            var registration = PerfCaptureService.ReadRegistration(args[1]);
+            using var identity = WindowsIdentity.GetCurrent();
+            var elevated = new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+            using var directories = elevated || registration.Mode == PerfProfileModes.Elevated
+                ? PerfCaptureDirectoryLease.Open(Path.GetDirectoryName(Path.GetFullPath(args[1]))!, registration.Directory)
+                : null;
+            using var worker = new PerfCaptureWorker(registration, args[1], etwApi);
             return await worker.RunAsync();
         }
         catch (Exception ex)
@@ -187,10 +193,6 @@ internal sealed class PerfCaptureWorker : IDisposable
                     throw new InvalidOperationException("Only an elevated capture can start recording before launch.");
                 }
                 BeginRecording(request.Scope, null);
-                if (request.Scope is { ExecutableName: null, PackageFullName: null })
-                {
-                    capture.Warnings.Add("The app could not be identified before launch, so every running process's WinUI and .NET events are recorded. Close other WinUI or .NET apps, or raise --profile-max-size-mib, if recording stops with size-limit.");
-                }
                 capture.Save();
                 return new(capture);
             case "bind":

@@ -123,19 +123,13 @@ internal partial class RunCommand
         /// <summary>Scopes an elevated capture to the current user's registration of the package.</summary>
         private Task PreparePackageProfileAsync(string? packageFamilyName, CancellationToken token)
         {
-            if (profileRun is not { Elevated: true } || string.IsNullOrEmpty(packageFamilyName))
+            if (profileRun is not { Elevated: true })
             {
                 return PrepareProfileAsync(new(), token);
             }
-            string? fullName = null;
-            try
-            {
-                fullName = appLauncherService.GetRegisteredPackageOrThrow(packageFamilyName)?.FullName;
-            }
-            catch (Exception ex)
-            {
-                logger.LogDebug("Could not resolve package {Family} for the capture scope: {Message}", packageFamilyName, ex.Message);
-            }
+            var fullName = string.IsNullOrWhiteSpace(packageFamilyName)
+                ? null
+                : appLauncherService.GetRegisteredPackageOrThrow(packageFamilyName)?.FullName;
             return PrepareProfileAsync(new(PackageFullName: fullName), token);
         }
 
@@ -192,6 +186,11 @@ internal sealed class PerfRunCapture(PerfCaptureService service, string director
 
     public async Task PrepareAsync(PerfEtwScope scope, CancellationToken token)
     {
+        if (Elevated && scope.IsEmpty)
+        {
+            throw new InvalidOperationException(
+                "Cannot identify the app for elevated performance recording. Use --profile-mode attach to record after launch.");
+        }
         registration = await service.PrepareAsync(Directory, duration, size, mode, token);
         if (Elevated)
         {

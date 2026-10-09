@@ -17,6 +17,7 @@ namespace WinApp.Cli.Services.Performance;
 internal sealed record PerfEtwScope(int? ProcessId = null, string? ExecutableName = null, string? PackageFullName = null)
 {
     public bool IsPrivate => ProcessId is not null;
+    public bool IsEmpty => ProcessId is null && string.IsNullOrWhiteSpace(PackageFullName ?? ExecutableName);
 }
 
 /// <summary>An ETW file logger for one capture. It never changes ETW access permissions.</summary>
@@ -52,6 +53,10 @@ internal sealed unsafe class PrivateEtwSession : IDisposable
     public PrivateEtwSession(string name, Guid sessionId, PerfEtwScope scope, string outputPath, int maximumSizeMiB,
         IPrivateEtwApi? api = null)
     {
+        if (scope.IsEmpty)
+        {
+            throw new ArgumentException("An ETW capture requires a process ID, executable name, or package full name.", nameof(scope));
+        }
         if (scope.ProcessId is { } processId)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(processId);
@@ -134,7 +139,7 @@ internal sealed unsafe class PrivateEtwSession : IDisposable
         }
         else
         {
-            return null;
+            throw new ArgumentException("An ETW capture requires a process ID, executable name, or package full name.", nameof(scope));
         }
         var descriptor = (EVENT_FILTER_DESCRIPTOR*)NativeMemory.AllocZeroed((nuint)sizeof(EVENT_FILTER_DESCRIPTOR));
         *descriptor = new() { Ptr = (ulong)data, Size = size, Type = type };

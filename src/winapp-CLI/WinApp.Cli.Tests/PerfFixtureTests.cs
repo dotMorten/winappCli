@@ -94,11 +94,11 @@ public sealed class PerfFixtureTests
                 Assert.IsTrue(result.Rows.Any(row =>
                     row.GcInterval is { Kind: "collection", CollectionType: "blocking", Status: "complete", DurationMs: > 0 }));
 
-                analysis.Manifest.AnalyzerVersion = 1;
+                analysis.Manifest.AnalyzerVersion = 0;
                 File.WriteAllText(Path.Join(analysis.Directory, "manifest.json"),
                     JsonSerializer.Serialize(analysis.Manifest, PerfJsonContext.Default.PerfAnalysisManifest));
                 var rebuilt = PerfAnalysisStore.Open(gcCapture.FullName, gcTimeout.Token);
-                Assert.AreEqual(2, rebuilt.Manifest.AnalyzerVersion);
+                Assert.AreEqual(1, rebuilt.Manifest.AnalyzerVersion);
                 var rebuiltResult = PerfQuery.Execute(rebuilt, new(View: "gc", Limit: 100));
                 Assert.AreEqual(JsonSerializer.Serialize(result, PerfJsonContext.Default.PerfQueryResult),
                     JsonSerializer.Serialize(rebuiltResult, PerfJsonContext.Default.PerfQueryResult));

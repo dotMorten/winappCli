@@ -92,6 +92,13 @@ unelevated under your account. The recording starts before launch and
 `Profile.StartupCoverage` reports `recorded from launch (elevated session)`.
 Do not add startup delays or replace a generated `Main` to capture startup.
 
+Choose an empty output directory on a local drive, without symbolic links or
+junctions in its path. Elevated recording also requires a link-free local path
+for winapp's control directory. The recorder prevents these directories and their
+parents from being renamed or redirected until it exits. If a path cannot be
+secured, recording fails; use the direct directory path or record after launch
+with `--profile-mode attach`.
+
 Elevated recording is limited to the launched app's package (packaged apps) or
 executable name (unpackaged apps), and analysis keeps only the launched process.
 Other instances of the same app that run during the recording also count

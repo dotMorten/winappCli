@@ -33,6 +33,8 @@ internal sealed class PerfCaptureService(IWinappDirectoryService directories, IA
         {
             throw new IOException("The capture output directory must be empty.");
         }
+        using var outputLease = mode == PerfProfileModes.Elevated
+            ? PerfCaptureDirectoryLease.Open(output.FullName) : null;
         // CreateNew claims the directory before publishing any mutable capture state.
         using (new FileStream(Path.Join(output.FullName, ".capture-owner"), FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
@@ -46,6 +48,8 @@ internal sealed class PerfCaptureService(IWinappDirectoryService directories, IA
         acl.AddAccessRule(new FileSystemAccessRule(identity.User!, FileSystemRights.FullControl,
             InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
         registry.Create(acl);
+        using var registryLease = mode == PerfProfileModes.Elevated
+            ? PerfCaptureDirectoryLease.Open(registry.FullName) : null;
         var registration = new PerfControlRegistration(id, output.FullName,
             Convert.ToHexString(RandomNumberGenerator.GetBytes(32)), Guid.NewGuid(), durationSec, maxSizeMiB, Mode: mode);
         var registrationPath = Path.Join(registry.FullName, "control.json");
