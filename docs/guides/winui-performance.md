@@ -119,7 +119,8 @@ administrator terminal with `logman stop WinApp-Perf-<capture-id> -ets`.
 winapp perf analyze .\traces\scroll --from-marker scenario-start --to-marker scenario-end
 ```
 
-The default report starts with observed activity on the primary UI thread, then
+The default report starts with [process resources](#compare-process-resource-cost),
+then observed activity on the primary UI thread. It
 lists the 10 XAML resources with the most parsing time, followed by the detailed
 operation ranking. The text report skips the parsing-resource section when it is
 empty. Each activity interval belongs to only one category, so nested
@@ -169,7 +170,7 @@ Replace element and event IDs with IDs from your results.
 
 | View | What it returns |
 |---|---|
-| `summary` | Primary-UI-thread activity, the 10 hottest parsed resources, then recorded phases and elements ranked by exclusive or self time |
+| `summary` | Process resources, primary-UI-thread activity, the 10 hottest parsed resources, then recorded phases and elements ranked by exclusive or self time |
 | `parsing` | Complete pageable XAML resource ranking by observed parsing time |
 | `elements` | Element rankings; `--type` filters observed type names, and `--sort` accepts `self`, `inclusive`, or `count` |
 | `element` | One trace-local element and, with `--depth`, elements observed beneath it during the selected range |
@@ -179,10 +180,12 @@ Replace element and event IDs with IDs from your results.
 | `calls` | Instrumented operations, longest first; `--family layout` restricts the operation family |
 | `call` | One operation and its execution subtree, selected with `--id`; default depth 2, maximum 4 |
 | `gc` | CLR collection lifetimes and runtime suspension episodes, in time order |
+| `resources` | Process CPU counters, private bytes, working set, thread count, and handle count, in time order |
 
 All views accept `--from-ms` and `--to-ms`. `--thread` selects the UI thread for
 `summary` and `parsing`, and restricts UI operations or raw events in other
-applicable views. It does not apply to `gc`, whose boundaries can cross threads.
+applicable views. It does not apply to `gc`, whose boundaries can cross threads,
+or process-wide `resources`.
 Milliseconds are relative
 to provider readiness; negative times can occur while the provider set is being
 enabled. A marker and a millisecond boundary cannot specify the same range end.
@@ -281,6 +284,48 @@ workflow and its permissions; it is not another event source this private logger
 can enable. Logical network or file-request duration, where separately recorded,
 also does not by itself prove UI blocking.
 
+## Compare process resource cost
+
+```powershell
+winapp perf analyze .\traces\startup --view resources
+winapp perf analyze .\traces\scroll --view resources --from-marker scenario-start --to-marker scenario-end --json
+```
+
+Process counters are collected automatically in both attach and elevated captures,
+including native C++ apps, without requiring extra elevation. Sampling starts when
+the recorder binds to the target process, repeats approximately once per second,
+and takes a final sample when stopping if the process is still alive.
+
+The default analysis includes a `processResources` summary. Use `--view resources`
+for the paged timeline, with the same marker/millisecond bounds, `--limit`,
+`--offset`, and `--max-bytes`. This view reads `capture.json` directly, so it also
+works when a finalized capture has no usable XAML events or ETL files.
+
+The summary shows first, last, and **maximum observed** private bytes, working set,
+thread count, and handle count within the selected range. Private bytes measure
+private committed memory; working set measures resident memory and can include
+shared pages. These are process costs, not allocation counts or memory attributed
+to XAML, compositor, or driver components.
+
+Summary user/kernel/total CPU milliseconds are differences between the first and
+last samples in the selected range, across all target-process threads. The
+timeline's user/kernel CPU values are cumulative since process creation.
+`firstSampleMs` and `lastSampleMs` identify the actual observed span, relative to
+recording readiness. CPU can exceed elapsed time when multiple cores work
+concurrently. No CPU percentage or per-thread/module attribution is inferred.
+
+Counters exclude child processes. Even an elevated startup capture cannot recover
+counter snapshots from before binding. Sampling can miss brief memory/thread
+spikes, and process exit can prevent a final sample; observed maxima are not exact
+lifetime peaks. Range boundaries are not interpolated. With fewer than two
+samples, interval CPU is unavailable, not zero.
+
+Older captures report `not-recorded` in the summary and cannot gain counters
+retroactively. A range without samples reports `not-observed`. Failed sampling
+attempts appear as `failedSamples` and `lastError`, without discarding the ETW
+recording. A resource query returns retained samples with a nonzero exit status
+when sampling failures occurred; keep stdout and inspect `coverage.reasons`.
+
 ## Interpret the evidence
 
 - **Inclusive time** includes nested work. **Exclusive time** subtracts the union
@@ -310,7 +355,7 @@ also does not by itself prove UI blocking.
 
 ## Files, privacy, and troubleshooting
 
-`capture.json` records identity, runtime provenance, limits, markers, actual ETL
+`capture.json` records identity, runtime provenance, limits, markers, process counter samples, actual ETL
 filenames, and stop/loss information. The standard `trace.etl` files are the raw
 evidence. Windows tools such as WPA or PerfView may need manifests matching the
 recorded WinUI runtime to interpret legacy events.

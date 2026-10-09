@@ -38,6 +38,9 @@ description: Investigate slow WinUI 3 layout, scrolling and virtualization using
    collection and suspension intervals, then inspect referenced interval IDs. Use
    element and event views for source and evidence drill-down. Follow `nextOffset`;
    do not dump NDJSON or ETL into context.
+   For overall resource cost, use `--view resources` over the same marker range;
+   see the guide's
+   [process counters](https://github.com/microsoft/WinAppCli/blob/main/docs/guides/winui-performance.md#compare-process-resource-cost).
 7. Report observed cost, supporting event IDs, coverage gaps, and one concrete next
    experiment. Preserve stdout when partial results accompany a nonzero exit code.
 
@@ -50,10 +53,13 @@ description: Investigate slow WinUI 3 layout, scrolling and virtualization using
 - Recording is local only. Do not combine `run --profile` with `--on sandbox`;
   see the guide for the supported launch and recording commands.
 - Readiness is not decoded coverage. Missing events are inconclusive.
-- Use elapsed-time terminology; do not claim CPU/GPU attribution, displayed FPS,
+- For WinUI operations, use elapsed-time terminology; do not claim CPU/GPU attribution, displayed FPS,
   proven input-to-display latency, or complete startup/visual-tree coverage.
 - `Unclassified` includes idle, waits, and uninstrumented work. Do not describe it
   as app code or CPU use. Off-thread image decode is not UI-thread occupancy.
+- Process CPU counters include all target threads but do not attribute functions,
+  modules, or waits. Sampled memory/thread maxima can miss brief spikes; missing
+  samples are not zero resource use.
 - Trace-local element IDs are not UI Automation selectors.
 - Call trees are instrumented operation scopes, not CPU stacks or visual trees.
   Keep exclusive scope time distinct from element self time.

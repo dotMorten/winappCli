@@ -125,6 +125,8 @@ public class PerfCommandTests : BaseCommandTests
     [DataRow("perf analyze missing --view call --json")]
     [DataRow("perf analyze missing --view call --id c1 --depth 5 --json")]
     [DataRow("perf analyze missing --view gc --thread 1 --json")]
+    [DataRow("perf analyze missing --view resources --thread 1 --json")]
+    [DataRow("perf analyze missing --view resources --family layout --json")]
     [DataRow("perf analyze missing --view calls --sort self --json")]
     [DataRow("perf analyze missing --view gc --sort self --json")]
     [DataRow("perf analyze missing --view hotspots --sort duration --json")]
@@ -139,6 +141,54 @@ public class PerfCommandTests : BaseCommandTests
         Assert.AreEqual("", stdout);
         using var error = JsonDocument.Parse(stderr);
         Assert.AreEqual("invalid_arguments", error.RootElement.GetProperty("code").GetString());
+    }
+
+    [TestMethod]
+    public async Task ResourceAnalysisNeedsNoEtlAndReportsPartialCounterFailures()
+    {
+        var directory = Directory.CreateTempSubdirectory("WinApp-Resource-Command-");
+        try
+        {
+            var capture = new PerfCaptureDocument
+            {
+                Id = Guid.NewGuid().ToString("N"), Directory = directory.FullName, SessionName = "test",
+                Target = new(Environment.ProcessId, DateTime.UtcNow), State = "completed",
+                Frequency = 1000, ReadyQpc = 1000, StopQpc = 2000,
+                ProcessResources = new()
+                {
+                    Samples = [new(1000, 10, 20, new(10, 20, 3, 4)), new(2000, 30, 40, new(30, 40, 4, 5))],
+                },
+            };
+            capture.Save();
+            string[] args = ["perf", "analyze", directory.FullName, "--view", "resources", "--json"];
+            var (stdout, stderr, code) = await InvokeProgramAsync(args);
+            Assert.AreEqual(0, code, stderr);
+            Assert.AreEqual("", stderr);
+            using (var result = JsonDocument.Parse(stdout))
+            {
+                Assert.AreEqual(40, result.RootElement.GetProperty("processResources").GetProperty("totalCpuMs").GetDouble());
+                Assert.AreEqual(2, result.RootElement.GetProperty("rows").GetArrayLength());
+            }
+            Assert.AreEqual(0, await ParseAndInvokeWithCaptureAsync(GetRequiredService<PerfCommand>(),
+                ["analyze", directory.FullName, "--view", "resources"]));
+            StringAssert.Contains(TestAnsiConsole.Output, "Private MiB");
+            StringAssert.Contains(TestAnsiConsole.Output, "User CPU ms");
+            StringAssert.Contains(TestAnsiConsole.Output, "CPU: 40");
+            capture.ProcessResources.FailedSamples = 1;
+            capture.ProcessResources.LastError = "Counter unavailable";
+            capture.Save();
+            var partial = await InvokeProgramAsync(args);
+            Assert.AreEqual(1, partial.ExitCode);
+            using var error = JsonDocument.Parse(partial.Stderr);
+            Assert.AreEqual("partial_data", error.RootElement.GetProperty("code").GetString());
+            using var evidence = JsonDocument.Parse(partial.Stdout);
+            Assert.IsFalse(evidence.RootElement.GetProperty("coverage").GetProperty("complete").GetBoolean());
+            Assert.AreEqual(2, evidence.RootElement.GetProperty("rows").GetArrayLength());
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     [TestMethod]
@@ -434,7 +484,7 @@ public class PerfCommandTests : BaseCommandTests
             Assert.AreEqual(0, code, stderr);
             using var json = JsonDocument.Parse(stdout);
             var limitations = json.RootElement.GetProperty("limitations");
-            Assert.AreEqual(8, limitations.GetArrayLength());
+            Assert.AreEqual(9, limitations.GetArrayLength());
             foreach (var limitation in limitations.EnumerateArray())
             {
                 Assert.IsFalse(output.Contains(limitation.GetString()!, StringComparison.Ordinal));
@@ -447,11 +497,17 @@ public class PerfCommandTests : BaseCommandTests
     }
 
     [TestMethod]
-    public async Task SummaryJsonRetainsEvidenceAndStatistics()
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task SummaryJsonRetainsEvidenceAndStatistics(bool includeResources)
     {
         var directory = CreateCachedAnalysis(
             [new("c1", "Layout", "layout", 1, null, null, "v1", "v2",
-                0, 10, 10, null, "complete", 10)]);
+                0, 10, 10, null, "complete", 10)],
+            resources: includeResources ? new()
+            {
+                Samples = [new(0, 10, 20, new(10, 20, 3, 4)), new(40, 30, 40, new(30, 40, 4, 5))],
+            } : null);
         try
         {
             var (stdout, stderr, code) = await InvokeProgramAsync(
@@ -466,6 +522,12 @@ public class PerfCommandTests : BaseCommandTests
             Assert.AreEqual(10d, row.GetProperty("meanMs").GetDouble());
             Assert.AreEqual(10d, row.GetProperty("maxMs").GetDouble());
             Assert.AreEqual(10d, row.GetProperty("p95Ms").GetDouble());
+            Assert.AreEqual(includeResources ? "observed" : "not-recorded", json.RootElement.GetProperty("processResources")
+                .GetProperty("availability").GetString());
+            if (includeResources)
+            {
+                Assert.AreEqual(40, json.RootElement.GetProperty("processResources").GetProperty("totalCpuMs").GetDouble());
+            }
         }
         finally
         {
@@ -661,7 +723,8 @@ public class PerfCommandTests : BaseCommandTests
     private static DirectoryInfo CreateCachedAnalysis(
         IEnumerable<PerfCall> calls,
         IEnumerable<PerfEvent>? events = null,
-        IEnumerable<PerfElement>? elements = null)
+        IEnumerable<PerfElement>? elements = null,
+        PerfProcessResources? resources = null)
     {
         var directory = Directory.CreateTempSubdirectory("WinApp-Perf-Console-");
         File.WriteAllBytes(Path.Join(directory.FullName, "trace.etl"), []);
@@ -677,6 +740,7 @@ public class PerfCommandTests : BaseCommandTests
             ReadyQpc = 0,
             StopQpc = 40,
             Frequency = 1000,
+            ProcessResources = resources,
             EventsLost = 0,
             BuffersLost = 0,
             TraceFiles = ["trace.etl"],

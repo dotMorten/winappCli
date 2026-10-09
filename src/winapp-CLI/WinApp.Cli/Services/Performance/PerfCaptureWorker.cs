@@ -24,6 +24,7 @@ internal sealed class PerfCaptureWorker : IDisposable
     private Process? target;
     private long deadline;
     private long lastProbe;
+    private long lastResourceProbe;
 
     private PerfCaptureWorker(PerfControlRegistration registration, string registrationPath, IPrivateEtwApi? etwApi)
     {
@@ -106,6 +107,7 @@ internal sealed class PerfCaptureWorker : IDisposable
                     break;
                 }
                 ProbeRuntime();
+                ProbeResources();
                 if (!connection.IsCompleted)
                 {
                     continue;
@@ -213,6 +215,8 @@ internal sealed class PerfCaptureWorker : IDisposable
                 {
                     BeginRecording(new(ProcessId: target.Id), target);
                 }
+                capture.ProcessResources = new();
+                ProbeResources(force: true);
                 capture.Save();
                 return new(capture);
             case "mark":
@@ -276,6 +280,30 @@ internal sealed class PerfCaptureWorker : IDisposable
         {
             capture.RuntimeProbeError = ex.Message;
         }
+    }
+
+    private void ProbeResources(bool force = false)
+    {
+        if (target is null || capture.ProcessResources is not { } resources ||
+            !force && Stopwatch.GetTimestamp() - lastResourceProbe < Stopwatch.Frequency)
+        {
+            return;
+        }
+        lastResourceProbe = Stopwatch.GetTimestamp();
+        try
+        {
+            if (resources.Samples.Count >= PerfProcessResources.MaximumSamples)
+            {
+                throw new InvalidOperationException("Process resource sample limit reached.");
+            }
+            resources.Samples.Add(PerfProcessResources.Read(target));
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or NotSupportedException)
+        {
+            resources.FailedSamples++;
+            resources.LastError = ex.Message.Length > 512 ? ex.Message[..512] : ex.Message;
+        }
+        capture.Save();
     }
 
     internal static string? UnfilteredProvidersWarning(PerfCaptureDocument capture)
@@ -409,6 +437,10 @@ internal sealed class PerfCaptureWorker : IDisposable
 
     private void Finish(string reason)
     {
+        if (target?.HasExited == false)
+        {
+            ProbeResources(force: true);
+        }
         ProbeRuntime();
         capture.State = "stopping";
         capture.StopReason = reason;

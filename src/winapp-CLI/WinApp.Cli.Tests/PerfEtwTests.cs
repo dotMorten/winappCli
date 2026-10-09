@@ -225,6 +225,10 @@ public sealed class PerfEtwTests
             await PerfCaptureService.BindAsync(registration, PerfProcessIdentity.Read(target),
                 "recorded from launch (elevated session)", false, CancellationToken.None);
             Assert.AreEqual(Environment.ProcessId, PerfCaptureService.ReadRegistration(registrationPath).Target?.Pid);
+            var bound = PerfCaptureDocument.Load(directory.FullName);
+            Assert.AreEqual(1, bound.ProcessResources!.Samples.Count);
+            Assert.IsGreaterThan(0L, bound.ProcessResources.Samples[0].Values.PrivateBytes);
+            await Task.Delay(1100);
 
             using (var malformed = new NamedPipeClientStream(".", PerfControlChannel.PipeName(id),
                 PipeDirection.Out, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly))
@@ -247,6 +251,10 @@ public sealed class PerfEtwTests
             Assert.AreEqual(1, api.StartCalls);
             Assert.AreEqual(1, api.StopCalls);
             Assert.IsNotNull(PerfCaptureDocument.Load(directory.FullName).StopQpc);
+            var resources = PerfCaptureDocument.Load(directory.FullName).ProcessResources!;
+            Assert.IsGreaterThanOrEqualTo(3, resources.Samples.Count,
+                "Binding, periodic polling, and finalization must all sample the target.");
+            Assert.AreEqual(0, resources.FailedSamples);
             Directory.Move(directory.FullName, directory.FullName + "-moved");
             Directory.Move(registry.FullName, registry.FullName + "-moved");
 

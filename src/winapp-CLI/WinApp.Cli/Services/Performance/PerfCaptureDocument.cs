@@ -57,6 +57,7 @@ internal sealed class PerfCaptureDocument
     public PerfRuntime? Runtime { get; set; }
     public List<PerfRuntime> ManagedRuntimes { get; set; } = [];
     public string? RuntimeProbeError { get; set; }
+    public PerfProcessResources? ProcessResources { get; set; }
     public string WindowsVersion { get; set; } = Environment.OSVersion.VersionString;
     public string CollectorVersion { get; set; } = VersionHelper.GetVersionString();
     [JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)]
@@ -102,6 +103,7 @@ internal sealed class PerfCaptureDocument
             }
         }
         capture.Directory = file.DirectoryName!;
+        capture.ProcessResources?.Validate();
         return capture;
     }
 }
@@ -154,5 +156,6 @@ internal sealed record PerfCommandError(string Code, string Message, bool Partia
 [JsonSerializable(typeof(PerfElement))]
 [JsonSerializable(typeof(PerfAnalysisManifest))]
 [JsonSerializable(typeof(PerfQueryResult))]
+[JsonSerializable(typeof(PerfResourceSample))]
 [JsonSerializable(typeof(PerfCommandError))]
 internal sealed partial class PerfJsonContext : JsonSerializerContext;
